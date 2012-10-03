@@ -1,13 +1,22 @@
 from setuptools import setup
 
+entry_points = """
+[console_scripts]
+tablesnap = tablesnap:tablesnap_main
+
+[sub_commands]
+S3SnapSubCommand = tablesnap.s3subcommands:S3SnapSubCommand
+"""
+
 setup(
     name='tablesnap',
-    version='0.6.0',
+    version='0.7.0',
     author='Jeremy Grosser',
     author_email='jeremy@synack.me',
-    scripts=['tablesnap', 'tableslurp'],
+    packages = ["tablesnap",],
     install_requires=[
-        'pyinotify',
         'boto>=2.2',
-    ]
+        "watchdog"
+    ],
+    entry_points=entry_points
 )
