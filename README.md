@@ -1,6 +1,10 @@
 Tablesnap
 =========
 
+**Note:** This is work in progress fork of table snap. If are looking for 
+something that works please visit the original. 
+
+
 Theory of Operation
 -------------------
 
