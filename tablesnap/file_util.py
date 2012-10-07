@@ -1,8 +1,13 @@
 """Utilities for working with Cassandra files."""
 
+import logging
+import grp
+import os
 import os.path
+import pwd
 import re
 
+import boto.utils
 
 DATA_COMPONENT = "Data.db"
 PRIMARY_INDEX_COMPONENT = "Index.db"
@@ -15,6 +20,8 @@ COMPACTED_MARKER = "Compacted"
 TEMPORARY_MARKER = "tmp"
 
 FILE_VERSION_PATTERN = re.compile("[a-z]+")
+
+log = logging.getLogger(__name__)
 
 class Descriptor(object):
     """Implementation of o.a.c.io.sstable.Descriptor in the Cassandra 
@@ -86,6 +93,47 @@ def is_live_file(file_path):
     except (ValueError):
         return False
 
+def file_meta(file_path):
+    """Get a dict of the os file meta. 
+    """
 
+    log.debug("Getting meta data for %(file_path)s" % vars())
+    stat = os.stat(file_path)
 
+    meta = {'uid': stat.st_uid,
+        'gid': stat.st_gid,
+        'mode': stat.st_mode,
+        "size" : stat.st_size
+    }
+
+    try:
+        meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
+    except (EnvironmentError):
+        log.debug("Ignoring error getting user name.", exc_info=True)
+        meta['user'] = ""
+
+    try:
+        meta['group'] = grp.getgrgid(stat.st_gid).gr_name
+    except (EnvironmentError):
+        log.debug("Ignoring error getting group name.", exc_info=True)
+        meta['group'] = ""
+
+    fp = open(file_path, 'rb')
+    try:
+        # returns tuple (md5_hex, md5_base64, file_size)
+        meta["md5_hex"], meta["md5_base64"], boto_size = \
+            boto.utils.compute_md5(fp)
+    finally:
+        fp.close()
+    assert boto_size == stat.st_size, "File size is different."
+
+    log.debug("For file %(file_path)s have meta %(meta)s " % vars())
+    return meta
+
+def _file_index(file_path):
+
+    dirname = os.path.dirname(file_path)
+    return {
+        dirname : os.listdir(dirname)
+    }
 

@@ -11,7 +11,7 @@ import socket
 
 import boto, boto.utils
 
-import snapsubcommands
+import file_util, snapsubcommands
 
 class S3SnapConfig(object):
     """S3 config. 
@@ -209,7 +209,7 @@ class S3Endpoint(object):
         """Called up upload the file at ``file_path``.
         """
         
-        meta = self._file_meta(file_path)
+        meta = file_util.file_meta(file_path)
 
         file_key_name = self.build_keyname(file_path)
         if self.s3.file_exists(file_key_name, file_path, meta):
@@ -218,7 +218,7 @@ class S3Endpoint(object):
             return
 
         if not self.snap_config.skip_index:
-            index_json = json.dumps(self._file_index(file_path))
+            index_json = json.dumps(file_util._file_index(file_path))
             self._do_upload_index(index_json, file_key_name, file_path)
         
         is_multipart_upload = meta["size"] >self.s3_config.max_file_size_bytes
@@ -240,13 +240,6 @@ class S3Endpoint(object):
             file_path)
         self.log.debug("For file %(file_path)s aws key is %(key)s" % vars())
         return key
-
-    def _file_index(self, file_path):
-
-        dirname = os.path.dirname(file_path)
-        return {
-            dirname : os.listdir(dirname)
-        }
 
     def _do_upload_index(self, index_json, file_key_name, file_path):
         """
@@ -318,43 +311,6 @@ class S3Endpoint(object):
         key.set_contents_from_filename(file_path, replace=True,
             cb=progress_cb, num_cb=1, md5=md5)
         return 
-
-    def _file_meta(self, file_path):
-        """Get a dict of the os file meta. 
-        """
-
-        self.log.debug("Getting meta data for %(file_path)s" % vars())
-        stat = os.stat(file_path)
-
-        meta = {'uid': stat.st_uid,
-            'gid': stat.st_gid,
-            'mode': stat.st_mode,
-            "size" : stat.st_size
-        }
-
-        try:
-            meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
-        except (EnvironmentError):
-            log.debug("Ignoring error getting user name.", exc_info=True)
-            meta['user'] = ""
-
-        try:
-            meta['group'] = grp.getgrgid(stat.st_gid).gr_name
-        except (EnvironmentError):
-            log.debug("Ignoring error getting group name.", exc_info=True)
-            meta['group'] = ""
-
-        fp = open(file_path, 'rb')
-        try:
-            # returns tuple (md5_hex, md5_base64, file_size)
-            meta["md5_hex"], meta["md5_base64"], boto_size = \
-                boto.utils.compute_md5(fp)
-        finally:
-            fp.close()
-        assert boto_size == stat.st_size, "File size has changed."
-
-        self.log.debug("For file %(file_path)s have meta %(meta)s " % vars())
-        return meta
 
     def split_sstable(self, file_path):
         """Yield chunks from ``file_path``.
