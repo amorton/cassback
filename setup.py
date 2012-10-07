@@ -2,9 +2,9 @@ from setuptools import setup
 
 entry_points = """
 [console_scripts]
-tablesnap = tablesnap:tablesnap_main
+tablesnap = tablesnap.scripts:tablesnap_main
 
-[sub_commands]
+[tablesnap.sub_commands]
 S3SnapSubCommand = tablesnap.s3subcommands:S3SnapSubCommand
 """
 
@@ -16,7 +16,7 @@ setup(
     packages = ["tablesnap",],
     install_requires=[
         'boto>=2.2',
-        "watchdog"
+        "watchdog>=0.6."
     ],
     entry_points=entry_points
 )

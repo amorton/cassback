@@ -1,4 +1,4 @@
-"""Utilities for working with Cassndra files."""
+"""Utilities for working with Cassandra files."""
 
 import os.path
 import re
@@ -17,6 +17,13 @@ TEMPORARY_MARKER = "tmp"
 FILE_VERSION_PATTERN = re.compile("[a-z]+")
 
 class Descriptor(object):
+    """Implementation of o.a.c.io.sstable.Descriptor in the Cassandra 
+    code base.
+
+    Describes a single SSTable.
+
+    Use :func:`from_file_path` to create instances.
+    """
 
     def __init__(self, ks_name, cf_name, version, 
         generation, temporary):
@@ -30,36 +37,54 @@ class Descriptor(object):
 
     @classmethod
     def from_file_path(cls, file_path):
-        """Parses ``file_path`` to create a :cls:`FileDescription`.
+        """Parses ``file_path`` to create a :cls:`Descriptor`.
 
-        `file_path` may be a path or a file name 
+        `file_path` may be a full path or just a file name. Raises 
+        :exc:`ValueError` if the ``file_path`` cannot be parsed.
+
+        Returns a tuple of (component, descriptor).
         """
         _, file_name = os.path.split(file_path)
 
         tokens = file_name.split("-")
-        i = 0
+        def safe_pop():
+            try:
+                return tokens.pop(0)
+            except (IndexError):
+                raise ValueError("Not a valid SSTable file path "\
+                    "%s" % (file_path,))
+        def safe_peek():
+            try:
+                return tokens[0]
+            except (IndexError):
+                raise ValueError("Not a valid SSTable file path "\
+                    "%s" % (file_path,))
+        
+        ks_name = safe_pop()
+        cf_name = safe_pop()
 
-        ks_name = tokens.pop(0)
-        cf_name = tokens.pop(0)
-
-        temporary = tokens[0] == TEMPORARY_MARKER:
+        temporary = safe_peek() == TEMPORARY_MARKER
         if temporary:
-            tokens.pop(0)
+            safe_pop()
 
-        if FILE_VERSION_PATTERN.match(tokens[0]):
-            version = tokens.pop()
+        if FILE_VERSION_PATTERN.match(safe_peek()):
+            version = safe_pop()
         else:
             # legacy
             version = "a"
 
-        generation = int(tokens.pop(0))
-        component = tokens.pop(0)
+        generation = int(safe_pop())
+        component = safe_pop()
 
         return (component, Descriptor(ks_name, cf_name, version, generation, 
             temporary))
 
-def is_not_temp(file_path):
-    return Descriptor.from_file_path(file_path).temporary == False
+def is_live_file(file_path):
+    try:
+        _, desc = Descriptor.from_file_path(file_path)
+        return desc.temporary == False
+    except (ValueError):
+        return False
 
 
 
