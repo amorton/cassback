@@ -63,38 +63,37 @@ class LocalEndpoint(object):
         self.snap_config = snap_config
         self.local_config = local_config
 
-    def store(self, file_path):
-        """Called up upload the file at ``file_path``.
+    def store(self, cass_file):
+        """Called up upload the ``cass_file``.
         """
         
-        meta = file_util.file_meta(file_path)
-
-        endpoint_path = self.endpoint_path(file_path)
-        if self.is_file_stored(endpoint_path, file_path, meta):
+        endpoint_path = self.endpoint_path(cass_file)
+        if self.is_file_stored(endpoint_path, cass_file):
             self.log.warn("Endpoint path %(endpoint_path)s for file "\
-                "%(file_path)s exists skipping" % vars())
+                "%(cass_file)s exists skipping" % vars())
             return
 
         if not self.snap_config.skip_index:
-            index_json = json.dumps(file_util._file_index(file_path))
+            index_json = json.dumps(file_util._file_index(cass_file.file_path))
             self._do_store_index(index_json, endpoint_path)
         
-        self._do_store(endpoint_path, file_path, meta)
+        self._do_store(endpoint_path, cass_file)
 
         return
 
-    def endpoint_path(self, file_path):
+    def endpoint_path(self, cass_file):
         
+        file_path = cass_file.file_path
         if file_path.startswith("/"):
             file_path = file_path[1:]
 
         ep = os.path.join(self.local_config.dest_base, file_path)
         
-        self.log.debug("Endpoint path for %(file_path)s is %(ep)s"\
+        self.log.debug("Endpoint path for %(cass_file)s is %(ep)s"\
             % vars())
         return ep
 
-    def is_file_stored(self, endpoint_path, file_path, meta):
+    def is_file_stored(self, endpoint_path, cass_file):
         return False
 
     def _do_store_index(self, index_json, endpoint_path):
@@ -111,7 +110,7 @@ class LocalEndpoint(object):
             f.write(index_json)
         return
 
-    def _do_store(self, endpoint_path, file_path, file_meta):
+    def _do_store(self, endpoint_path, cass_file):
 
         if self.snap_config.test_mode:
             self.log.info("TestMode - _do_store %s" % vars())
@@ -122,10 +121,10 @@ class LocalEndpoint(object):
 
         self._ensure_dir(meta_path)
         with open(meta_path, "w") as f:
-            f.write(json.dumps(file_meta))
+            f.write(json.dumps(cass_file.file_meta))
         
         # copy the file
-        shutil.copy(file_path, endpoint_path)
+        shutil.copy(cass_file.file_path, endpoint_path)
 
         return
 

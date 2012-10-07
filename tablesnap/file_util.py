@@ -86,49 +86,84 @@ class Descriptor(object):
         return (component, Descriptor(ks_name, cf_name, version, generation, 
             temporary))
 
-def is_live_file(file_path):
-    try:
-        _, desc = Descriptor.from_file_path(file_path)
-        return desc.temporary == False
-    except (ValueError):
-        return False
-
-def file_meta(file_path):
-    """Get a dict of the os file meta. 
+class CassandraFile(object):
+    """
     """
 
-    log.debug("Getting meta data for %(file_path)s" % vars())
-    stat = os.stat(file_path)
+    def __init__(self, file_path, descriptor, component):
 
-    meta = {'uid': stat.st_uid,
-        'gid': stat.st_gid,
-        'mode': stat.st_mode,
-        "size" : stat.st_size
-    }
+        assert os.path.dirname(file_path), "file_path does not inlcude dir"
+        self.file_path = file_path
+        self.descriptor = descriptor
+        self.component = component
+        self._file_meta = None
 
-    try:
-        meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
-    except (EnvironmentError):
-        log.debug("Ignoring error getting user name.", exc_info=True)
-        meta['user'] = ""
+    def __str__(self):
+        return self.file_path
 
-    try:
-        meta['group'] = grp.getgrgid(stat.st_gid).gr_name
-    except (EnvironmentError):
-        log.debug("Ignoring error getting group name.", exc_info=True)
-        meta['group'] = ""
+    @classmethod
+    def from_file_path(cls, file_path):
 
-    fp = open(file_path, 'rb')
-    try:
-        # returns tuple (md5_hex, md5_base64, file_size)
-        meta["md5_hex"], meta["md5_base64"], boto_size = \
-            boto.utils.compute_md5(fp)
-    finally:
-        fp.close()
-    assert boto_size == stat.st_size, "File size is different."
+        component, descriptor = Descriptor.from_file_path(file_path)
+        return CassandraFile(file_path, descriptor, component)
 
-    log.debug("For file %(file_path)s have meta %(meta)s " % vars())
-    return meta
+    def in_snapshot(self):
+        """Returns ``True`` if this file is in a snapshot."""
+
+        head = os.path.dirname(self.file_path)
+        while head != "/":
+            head, tail = os.path.split(head)
+            if tail == "snapshots":
+                return True
+        return False
+
+    def should_backup(self):
+        """Returns ``True`` if this file should be backed up. 
+        """
+        return (self.descriptor.temporary == False) and \
+            (self.in_snapshot() == False)
+
+    @property
+    def file_meta(self):
+        """Get a dict of the os file meta for this file. 
+        """
+
+        if self._file_meta is not None:
+            return self._file_meta
+
+        log.debug("Getting meta data for %(file_path)s" % vars(self))
+        stat = os.stat(self.file_path)
+
+        self._file_meta = {'uid': stat.st_uid,
+            'gid': stat.st_gid,
+            'mode': stat.st_mode,
+            "size" : stat.st_size
+        }
+
+        try:
+            self._file_meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
+        except (EnvironmentError):
+            log.debug("Ignoring error getting user name.", exc_info=True)
+            self._file_meta['user'] = ""
+
+        try:
+            self._file_meta['group'] = grp.getgrgid(stat.st_gid).gr_name
+        except (EnvironmentError):
+            log.debug("Ignoring error getting group name.", exc_info=True)
+            self._file_meta['group'] = ""
+
+        fp = open(self.file_path, 'rb')
+        try:
+            # returns tuple (md5_hex, md5_base64, file_size)
+            md5 = boto.utils.compute_md5(fp)
+        finally:
+            fp.close()
+        self._file_meta["md5_hex"] = md5[0]
+        self._file_meta["md5_base64"] = md5[1]
+        assert md5[2] == stat.st_size, "File size is different."
+
+        log.debug("Got file meta %(_file_meta)s " % vars(self))
+        return self._file_meta
 
 def _file_index(file_path):
 

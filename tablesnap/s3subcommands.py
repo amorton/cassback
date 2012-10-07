@@ -142,7 +142,7 @@ class S3Wrapper(object):
         return self._bucket
 
 
-    def file_exists(self, key_name, file_path, meta):
+    def file_exists(self, key_name, cass_file):
         """
         
         Check if this keyname (ie, file) has already been uploaded to
@@ -156,33 +156,34 @@ class S3Wrapper(object):
             self.log.debug('Key %(key_name)s does not exist' % vars())
             return False
         
-        self.log.debug('Found key %(key)s' % vars())
+        self.log.debug('Found key %(key_name)s' % vars())
 
-        if key.size != meta["size"]:
+        if key.size != cass_file.file_meta["size"]:
             self.log.warning('ATTENTION: your source (%s) and target (%s) '
                 'sizes differ, you should take a look. As immutable files '
                 'never change, one must assume the local file got corrupted '
                 'and the right version is the one in S3. Will skip this file '
-                'to avoid future complications' % (file_path, key_name, ))
+                'to avoid future complications' % (cass_file, key_name, ))
             return True
 
         key_md5 = key.get_metadata('md5sum')
         if key_md5:
-            result = meta["md5_hex"] == meta
+            result = cass_file.file_meta["md5_hex"] == meta
             self.log.debug('MD5 metadata comparison: %s == %s? : %s' %
-                          (meta["md5_hex"], key_md5, result))
+                          (cass_file.file_meta["md5_hex"], key_md5, result))
         else:
-            result = meta["md5_hex"] == key.etag.strip('"')
+            result = cass_file.file_meta["md5_hex"] == key.etag.strip('"')
             self.log.debug('ETag comparison: %s == %s? : %s' %
-                          (meta["md5_hex"], key.etag.strip('"'),result))
+                          (cass_file.file_meta["md5_hex"], key.etag.strip('"'),result))
             
             if result:
                 self.log.debug('Setting missing md5sum metadata for '
                     ' %(key_name)s' % vars())
-                key.set_metadata('md5sum', meta["md5_hex"])
+                # HACK: bad to write here
+                key.set_metadata('md5sum', cass_file.file_meta["md5_hex"])
         
         if result:
-            self.log.info("File %(file_path)s exists at key %(key_name)s"
+            self.log.info("File %(cass_file)s exists at key %(key_name)s"
                 % vars())
             return
 
@@ -191,7 +192,7 @@ class S3Wrapper(object):
             'files never change, one must assume the local file got '
             'corrupted and the right version is the one in S3. Will '
             'skip this file to avoid future complications' % 
-            (file_path, key_name, ))
+            (cass_file, key_name, ))
         return False
 
 
@@ -205,43 +206,43 @@ class S3Endpoint(object):
         self.s3 = S3Wrapper(self.s3_config)
 
 
-    def store(self, file_path):
-        """Called up upload the file at ``file_path``.
+    def store(self, cass_file):
+        """Called up upload the ``cass_file``.
         """
         
-        meta = file_util.file_meta(file_path)
-
-        file_key_name = self.build_keyname(file_path)
-        if self.s3.file_exists(file_key_name, file_path, meta):
-            self.log.warn("S3 Key %(file_key_name)s for file %(file_path)s, "\
+        file_key_name = self.build_keyname(cass_file)
+        if self.s3.file_exists(file_key_name, cass_file):
+            self.log.warn("S3 Key %(file_key_name)s for file %(cass_file)s, "\
                 "exists skipping" % vars())
             return
 
         if not self.snap_config.skip_index:
-            index_json = json.dumps(file_util._file_index(file_path))
-            self._do_upload_index(index_json, file_key_name, file_path)
+            index_json = json.dumps(file_util._file_index(cass_file.file_path))
+            self._do_upload_index(index_json, file_key_name)
         
-        is_multipart_upload = meta["size"] >self.s3_config.max_file_size_bytes
+        is_multipart_upload = cass_file.file_meta["size"] > \
+            self.s3_config.max_file_size_bytes
         self.log.debug('File size check: %s > %s ? : %s' %
-            (meta["size"], self.s3_config.max_file_size_bytes,
+            (cass_file.file_meta["size"], self.s3_config.max_file_size_bytes,
             is_multipart_upload))
 
         if is_multipart_upload:
             self.log.info('Performing multipart upload for %s' %
-                         (filename))
-            self._do_multi_part_upload(file_key_name, file_path, meta)
+                         (cass_file))
+            self._do_multi_part_upload(file_key_name, cass_file)
         else:
             self.log.debug('Performing monolithic upload')
-            self._do_single_part_upload(file_key_name, file_path, meta)
+            self._do_single_part_upload(file_key_name, cass_file)
         return
 
-    def build_keyname(self, file_path):
+    def build_keyname(self, cass_file):
+        file_path = cass_file.file_path
         key =  '%s%s:%s' % (self.s3_config.prefix, self.s3_config.host_name, 
             file_path)
-        self.log.debug("For file %(file_path)s aws key is %(key)s" % vars())
+        self.log.debug("For file %(cass_file)s aws key is %(key)s" % vars())
         return key
 
-    def _do_upload_index(self, index_json, file_key_name, file_path):
+    def _do_upload_index(self, index_json, file_key_name):
         """
         """
 
@@ -257,20 +258,19 @@ class S3Endpoint(object):
         
         return
 
-    def _do_multi_part_upload(self, file_key_name, file_path, file_meta, 
-        progress_cb=None):
+    def _do_multi_part_upload(self, file_key_name, cass_file):
 
         if self.snap_config.test_mode:
             self.log.info("TestMode - _do_multi_part_upload %s" % vars())
             return
 
         mp = bucket.initiate_multipart_upload(file_key_name,
-            metadata=file_meta)
+            metadata=cass_file.file_meta)
         
         chunk = None
         try:
 
-            for part, chunk in enumerate(self.split_sstable(file_name)):
+            for part, chunk in enumerate(self.split_sstable(cass_file.file_path)):
                 self.log.debug('Uploading part #%d (size: %d)' %
                            (part, chunk.len,))
                 try:
@@ -283,12 +283,9 @@ class S3Endpoint(object):
 
         self.log.debug('Uploaded %d parts, completing upload' % (part,))
         mp.complete_upload()
-        if progress_cb is not None:
-            progress_cb(100, 100)
         return
 
-    def _do_single_part_upload(self, file_key_name, file_path, file_meta, 
-        progress_cb=None):
+    def _do_single_part_upload(self, file_key_name, cass_file):
 
         if self.snap_config.test_mode:
             self.log.info("TestMode - _do_single_part_upload %s" % vars())
@@ -300,16 +297,16 @@ class S3Endpoint(object):
         # All meta data fields have to be strings.
         key.update_metadata({
             k : str(v)
-            for k, v in file_meta.iteritems()
+            for k, v in cass_file.file_meta.iteritems()
         })
         # Rebuild the MD5 tuple boto makes
         md5 = (
-            file_meta["md5_hex"], 
-            file_meta["md5_base64"], 
-            file_meta["size"]
+            cass_file.file_meta["md5_hex"], 
+            cass_file.file_meta["md5_base64"], 
+            cass_file.file_meta["size"]
         )
-        key.set_contents_from_filename(file_path, replace=True,
-            cb=progress_cb, num_cb=1, md5=md5)
+        key.set_contents_from_filename(cass_file.file_path, replace=True,
+            md5=md5)
         return 
 
     def split_sstable(self, file_path):

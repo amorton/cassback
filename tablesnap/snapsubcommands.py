@@ -82,8 +82,7 @@ class SnapSubCommand(subcommands.SubCommand):
         file_q = Queue.Queue()
 
         # Make a watcher
-        watcher = WatchdogWatcher(self.snap_config.watch_path, 
-            file_q, file_util.is_live_file)
+        watcher = WatchdogWatcher(self.snap_config.watch_path, file_q)
 
         # Make worker threads
         self.workers = [
@@ -124,26 +123,27 @@ class SnapWorkerThread(threading.Thread):
 
         while True:
             # blocking
-            file_path = self.file_q.get()
-            self.log.info("Uploading file %(file_path)s" % vars())
+            cass_file = self.file_q.get()
+            self.log.info("Uploading file %(cass_file)s" % vars())
             try:
 
-                self.endpoint.store(file_path)
+                self.endpoint.store(cass_file)
             except (EnvironmentError) as e:
                 # sometimes it's an IOError sometimes OSError
                 # EnvironmentError is the base
-                if not(e.errno == errno.ENOENT and e.filename==file_path):
+                if not(e.errno == errno.ENOENT and \
+                    e.filename==cass_file.file_path):
                     raise
-                self.log.info("Aborted uploading %(file_path)s was removed" %\
+                self.log.info("Aborted uploading %(cass_file)s was removed" %\
                     vars())
 
             except (Exception):
                 self.log.critical("Failed uploading %s. Aborting." %
-                    (file_path,), exc_info=True)
+                    (cass_file,), exc_info=True)
                 # Brute force kill self
                 os.kill(os.getpid(), signal.SIGKILL)
             else:
-                self.log.info("Uploaded file %(file_path)s" % vars())
+                self.log.info("Uploaded file %(cass_file)s" % vars())
 
             self.file_q.task_done()
         return
@@ -154,11 +154,10 @@ class WatchdogWatcher(events.FileSystemEventHandler):
     """Watch the disk for new files."""
     log = logging.getLogger("%s.%s" % (__name__, "WatchdogWatcher"))
 
-    def __init__(self, watch_path, file_q, file_filter, refresh=True, 
+    def __init__(self, watch_path, file_q, refresh=True, 
         watch=True):
         
         self.watch_path = watch_path
-        self.file_filter = file_filter
         self.file_q = file_q
         self.refresh = refresh
         self.watch = watch
@@ -168,18 +167,10 @@ class WatchdogWatcher(events.FileSystemEventHandler):
         # initial read
         # always recursive for now
         if self.refresh:
-            def gen_file_paths():
-                for root, dirs, files in os.walk(self.watch_path):
-                    for filename in files:
-                        yield os.path.join(root, filename)
-            for file_path in gen_file_paths():
-                if self.file_filter(file_path):
-                    self.log.info("Detected existing file %(file_path)s" % \
-                        vars())
-                    self.file_q.put(file_path)
-                else:
-                    self.log.info("Ignoring existing file %(file_path)s" % \
-                        vars())
+            for root, dirs, files in os.walk(self.watch_path):
+                for filename in files:
+                    self._maybe_queue_file(os.path.join(root, filename))
+
         # watch if configured
         if not self.watch:
             return 
@@ -198,29 +189,31 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             os.kill(os.getpid(), signal.SIGKILL)
         return
 
+    def _maybe_queue_file(self, file_path):
+
+        try:
+            cass_file = file_util.CassandraFile.from_file_path(file_path)
+        except (ValueError):
+            self.log.info("Ignoring non Cassandra file %(file_path)s" % \
+                vars())
+            return False
+
+        if cass_file.should_backup():
+            self.log.info("Queued file %(file_path)s" % vars())
+            self.file_q.put(cass_file)
+            return True
+
+        self.log.info("Ignoring file %(file_path)s" % vars())
+        return False
+
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Watchdog file events.
 
     def on_created(self, event):
-
-        if self.file_filter(event.src_path):
-            self.log.info("Detected created event for %s" % event.src_path)
-            self.file_q.put(event.src_path)
-        else:
-            self.log.info("Ignoring created event for %s" % event.src_path)
+        self._maybe_queue_file(event.src_path)
         return
 
     def on_moved(self, event):
-
-        if self.file_filter(event.dest_path):
-            self.log.info("Detected move event for %s" % event.dest_path)
-            self.file_q.put(event.dest_path)
-        else:
-            self.log.info("Ignoring move event for %s" % event.dest_path)
+        self._maybe_queue_file(event.dest_path)
         return
-
-        
-
-
-
 
