@@ -132,7 +132,7 @@ class SnapWorkerThread(threading.Thread):
             except (EnvironmentError) as e:
                 # sometimes it's an IOError sometimes OSError
                 # EnvironmentError is the base
-                if e.errno != errno.ENOENT and e.filename==file_path:
+                if not(e.errno == errno.ENOENT and e.filename==file_path):
                     raise
                 self.log.info("Aborted uploading %(file_path)s was removed" %\
                     vars())
