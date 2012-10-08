@@ -21,13 +21,12 @@ class SnapConfig(object):
     """General config for storing files.
     """
 
-    def __init__(self, cassandra_data_dir, threads, recursive, auto_add, skip_index,
+    def __init__(self, cassandra_data_dir, threads, recursive, auto_add,
         test_mode, exclude_keyspaces, include_system_keyspace):
         self.cassandra_data_dir = cassandra_data_dir
         self.threads = threads
         self.recursive = recursive
         self.auto_add = auto_add
-        self.skip_index = skip_index
         self.test_mode = test_mode
         self.exclude_keyspaces = exclude_keyspaces
         self.include_system_keyspace = include_system_keyspace 
@@ -35,7 +34,7 @@ class SnapConfig(object):
     @classmethod
     def from_args(cls, args):
         return SnapConfig(args.cassandra_data_dir, args.threads, args.recursive,
-            args.auto_add, args.skip_index, args.test_mode, 
+            args.auto_add, args.test_mode, 
             args.exclude_keyspace or [], args.include_system_keyspace)
 
         
@@ -60,10 +59,6 @@ class SnapSubCommand(subcommands.SubCommand):
             dest='auto_add', default=False,
             help="Automatically start watching new subdirectories within "\
                 "path(s)")
-        common_args.add_argument('--skip-index', 
-            action='store_true', dest='skip_index', default=False,
-            help="Disable storing a JSON index of all files in the snapshot.")
-
         common_args.add_argument('--exclude-keyspace', 
             dest='exclude_keyspace', nargs="*",
             help="User keyspaces to exclude from backup.")
@@ -135,11 +130,11 @@ class SnapWorkerThread(threading.Thread):
 
         while True:
             # blocking
-            cass_file = self.file_q.get()
+            ks_manifest, cass_file = self.file_q.get()
             self.log.info("Uploading file %(cass_file)s" % vars())
             try:
 
-                self.endpoint.store(cass_file)
+                self.endpoint.store(ks_manifest, cass_file)
             except (EnvironmentError) as e:
                 # sometimes it's an IOError sometimes OSError
                 # EnvironmentError is the base
@@ -231,9 +226,11 @@ class WatchdogWatcher(events.FileSystemEventHandler):
                 % vars())
             return False
 
+        ks_manifest = file_util.KeyspaceManifest(
+            self.snap_config.cassandra_data_dir, cass_file.descriptor.ks_name)
         self.log.info("Queueing file %(cass_file)s"\
             % vars())
-        self.file_q.put(cass_file)
+        self.file_q.put((ks_manifest, cass_file))
         return True
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

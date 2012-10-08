@@ -1,5 +1,6 @@
 """Utilities for working with Cassandra files."""
 
+import datetime
 import logging
 import grp
 import os
@@ -179,6 +180,59 @@ class CassandraFile(object):
             file_name,
         ))
 
+class KeyspaceManifest(object):
+
+    def __init__(self, data_dir, ks_name):
+        self.data_dir = data_dir
+        self.ks_name = ks_name
+        self.timestamp = datetime.datetime.now().isoformat()
+
+        # Get a list of the files in each CF for this KS.
+        # generate a list of (cf_name, cf_file_name)
+
+        def gen_cf_files():
+            # in cassandra 1.1 file layout is 
+            # ks/cf/sstable-component
+
+            ks_dir = os.path.join(data_dir, ks_name)
+            _, cf_dirs, _ = os.walk(ks_dir).next()
+            for cf_dir in cf_dirs:
+                _, _, cf_files = os.walk(os.path.join(ks_dir, cf_dir)).next()
+                for cf_file in cf_files:
+                    yield(cf_dir, cf_file)
+
+        column_families = {}
+        for cf_name, file_name in gen_cf_files():
+            try:
+                _, desc = Descriptor.from_file_path(file_name)
+            except (ValueError):
+                # not a valid file name
+                pass
+            else:
+                if not desc.temporary:
+                    column_families.setdefault(cf_name, []).append(file_name)
+
+        self.manifest = {
+            "host" : socket.getfqdn(),
+            "keyspace" : self.ks_name,
+            "timestamp" : self.timestamp,
+            "column_families" : column_families
+        }
+
+
+    def backup_path(self):
+        """Gets the relative path to backup the keyspace manifest to."""
+
+        # Would preferer to use the token here. 
+
+        safe_ts = self.timestamp.replace(":", "_").replace(".", "_")
+        file_name = "%s-%s.json" % (safe_ts, socket.getfqdn())
+
+        return os.path.join(*(
+            "cluster",
+            self.ks_name,
+            file_name
+            ))
 
 
 # Here be JUNK

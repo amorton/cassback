@@ -63,67 +63,50 @@ class LocalEndpoint(object):
         self.snap_config = snap_config
         self.local_config = local_config
 
-    def store(self, cass_file):
+    def store(self, ks_manifest, cass_file):
         """Called up upload the ``cass_file``.
         """
         
-        endpoint_path = self.endpoint_path(cass_file)
-        if self.is_file_stored(endpoint_path, cass_file):
+        if self.is_file_stored(cass_file):
             self.log.warn("Endpoint path %(endpoint_path)s for file "\
                 "%(cass_file)s exists skipping" % vars())
             return
 
-        if not self.snap_config.skip_index:
-            index_json = json.dumps(file_util._file_index(cass_file.file_path))
-            self._do_store_index(index_json, endpoint_path)
-        
-        self._do_store(endpoint_path, cass_file)
+        # Store the keyspace manifest
+        dest_manifest_path = os.path.join(self.local_config.dest_base, 
+            ks_manifest.backup_path())
 
-        return
-
-    def endpoint_path(self, cass_file):
+        if self.snap_config.test_mode:
+            self.log.info("TestMode -  store keyspace manifest to "\
+                "%(dest_manifest_path)s" % vars())
+        else:
+            self._ensure_dir(dest_manifest_path)
+            with open(dest_manifest_path, "w") as f:
+                f.write(json.dumps(ks_manifest.manifest))
         
-        ep = os.path.join(self.local_config.dest_base, 
+        # Store the cassandra file
+        dest_file_path = os.path.join(self.local_config.dest_base, 
             cass_file.backup_path())
 
-        self.log.debug("Endpoint path for %(cass_file)s is %(ep)s"\
-            % vars())
-        return ep
+        if self.snap_config.test_mode:
+            self.log.info("TestMode - store file to %(dest_file_path)s"\
+                 % vars())
+        else:
+            # Store the file
+            dest_meta_path = "%(dest_file_path)s-meta.json" % vars()
 
-    def is_file_stored(self, endpoint_path, cass_file):
+            self._ensure_dir(dest_meta_path)
+            with open(dest_meta_path, "w") as f:
+                f.write(json.dumps(cass_file.file_meta))
+            
+            # copy the file
+            shutil.copy(cass_file.file_path, dest_file_path)
+        return
+
+
+    def is_file_stored(self, cass_file):
+        # HACK: 
         return False
-
-    def _do_store_index(self, index_json, endpoint_path):
-        """
-        """
-
-        if self.snap_config.test_mode:
-            self.log.info("TestMode - _do_upload_index %s" % vars())
-            return
-        index_path = "%(endpoint_path)s-listdir.json" % vars()
-
-        self._ensure_dir(index_path)
-        with open(index_path, "w") as f:
-            f.write(index_json)
-        return
-
-    def _do_store(self, endpoint_path, cass_file):
-
-        if self.snap_config.test_mode:
-            self.log.info("TestMode - _do_store %s" % vars())
-            return
-
-        # Store the meta data
-        meta_path = "%(endpoint_path)s-meta.json" % vars()
-
-        self._ensure_dir(meta_path)
-        with open(meta_path, "w") as f:
-            f.write(json.dumps(cass_file.file_meta))
-        
-        # copy the file
-        shutil.copy(cass_file.file_path, endpoint_path)
-
-        return
 
     def _ensure_dir(self, path):
         if not os.path.isdir(os.path.dirname(path)):

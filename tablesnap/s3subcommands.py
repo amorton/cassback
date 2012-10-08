@@ -95,102 +95,6 @@ class S3SnapSubCommand(snapsubcommands.SnapSubCommand):
         return S3Endpoint(copy.deepcopy(self.snap_config),
             copy.deepcopy(self.s3_config))
 
-class S3Wrapper(object):
-    """Container for S3 functions. 
-
-    TODO: needed ? merge with something else ?
-    """
-
-    log = logging.getLogger("%s.%s" % (__name__, "S3Wrapper"))
-
-    def __init__(self, s3_config):
-        self.s3_config = s3_config
-
-        self._s3_conn = None
-        self._bucket = None
-
-    def _conn(self):
-        if self._s3_conn is not None:
-            return self._s3_conn
-
-        self._s3_conn = boto.connect_s3(self.s3_config.aws_key, 
-            self.s3_config.aws_secret)
-        self._s3_conn.retries = self.s3_config.retries
-
-        return self._s3_conn
-
-    def reset(self):
-
-        if self._s3_conn is not None:
-            self._s3_conn.close()
-        self._s3_conn = None
-        self.bucket = None
-        return
-
-    def bucket(self):
-        
-        if self._bucket is not None:
-            return self._bucket
-
-        self.log.debug("Getting aws bucket %(bucket_name)s" % \
-            vars(self.s3_config))
-        self._bucket = self._conn().get_bucket(self.s3_config.bucket_name)
-        return self._bucket
-
-
-    def file_exists(self, key_name, cass_file):
-        """
-        
-        Check if this keyname (ie, file) has already been uploaded to
-        the S3 bucket. This will verify that not only does the keyname
-        exist, but that the MD5 sum is the same -- this protects against
-        partial or corrupt uploads.
-        """
-
-        key = self.bucket().get_key(key_name)
-        if key == None:
-            self.log.debug('Key %(key_name)s does not exist' % vars())
-            return False
-        
-        self.log.debug('Found key %(key_name)s' % vars())
-
-        if key.size != cass_file.file_meta["size"]:
-            self.log.warning('ATTENTION: your source (%s) and target (%s) '
-                'sizes differ, you should take a look. As immutable files '
-                'never change, one must assume the local file got corrupted '
-                'and the right version is the one in S3. Will skip this file '
-                'to avoid future complications' % (cass_file, key_name, ))
-            return True
-
-        key_md5 = key.get_metadata('md5sum')
-        if key_md5:
-            result = cass_file.file_meta["md5_hex"] == meta
-            self.log.debug('MD5 metadata comparison: %s == %s? : %s' %
-                          (cass_file.file_meta["md5_hex"], key_md5, result))
-        else:
-            result = cass_file.file_meta["md5_hex"] == key.etag.strip('"')
-            self.log.debug('ETag comparison: %s == %s? : %s' %
-                          (cass_file.file_meta["md5_hex"], key.etag.strip('"'),result))
-            
-            if result:
-                self.log.debug('Setting missing md5sum metadata for '
-                    ' %(key_name)s' % vars())
-                # HACK: bad to write here
-                key.set_metadata('md5sum', cass_file.file_meta["md5_hex"])
-        
-        if result:
-            self.log.info("File %(cass_file)s exists at key %(key_name)s"
-                % vars())
-            return
-
-        self.log.warning('ATTENTION: your source (%s) and target (%s) '
-            'MD5 hashes differ, you should take a look. As immutable '
-            'files never change, one must assume the local file got '
-            'corrupted and the right version is the one in S3. Will '
-            'skip this file to avoid future complications' % 
-            (cass_file, key_name, ))
-        return False
-
 
 class S3Endpoint(object):
     log = logging.getLogger("%s.%s" % (__name__, "S3Endpoint"))
@@ -199,66 +103,131 @@ class S3Endpoint(object):
 
         self.snap_config = snap_config
         self.s3_config = s3_config
-        self.s3 = S3Wrapper(self.s3_config)
 
+        # Access the S3 connection and bucket through functions.
+        self.__s3_conn = None
+        self.__bucket = None
 
-    def store(self, cass_file):
+    def store(self, ks_manifest, cass_file):
         """Called up upload the ``cass_file``.
         """
         
-        file_key_name = self.build_keyname(cass_file)
-        if self.s3.file_exists(file_key_name, cass_file):
-            self.log.warn("S3 Key %(file_key_name)s for file %(cass_file)s, "\
+        dest_key_name = os.path.join(self.s3_config.prefix, 
+            cass_file.backup_path())
+
+        if self._file_exists(dest_key_name, cass_file.file_meta):
+            self.log.warn("S3 Key %(dest_key_name)s for file %(cass_file)s, "\
                 "exists skipping" % vars())
             return
 
-        if not self.snap_config.skip_index:
-            index_json = json.dumps(file_util._file_index(cass_file.file_path))
-            self._do_upload_index(index_json, file_key_name)
+        # Store the keyspace manifest
+        dest_manifest_key = os.path.join(self.s3_config.prefix, 
+            ks_manifest.backup_path())
+
+        if self.snap_config.test_mode:
+            self.log.info("TestMode -  store keyspace manifest to "\
+                "%(dest_manifest_key)s" % vars())
+        else:
+            manifest_s3_key = self._bucket().new_key(dest_manifest_key)
+            manifest_s3_key.set_contents_from_string(
+                json.dumps(ks_manifest.manifest),
+                headers={'Content-Type': 'application/json'},
+                replace=True)
         
+        # Store the backup file
         is_multipart_upload = cass_file.file_meta["size"] > \
             self.s3_config.max_file_size_bytes
         self.log.debug('File size check: %s > %s ? : %s' %
             (cass_file.file_meta["size"], self.s3_config.max_file_size_bytes,
             is_multipart_upload))
 
-        if is_multipart_upload:
+        if self.snap_config.test_mode:
+            self.log.info("TestMode - %s upload of %s" % (
+                "multi" if is_multipart_upload else "single", cass_file ))
+        elif is_multipart_upload:
             self.log.info('Performing multipart upload for %s' %
                          (cass_file))
-            self._do_multi_part_upload(file_key_name, cass_file)
+            self._do_multi_part_upload(dest_key_name, cass_file)
         else:
-            self.log.debug('Performing monolithic upload')
-            self._do_single_part_upload(file_key_name, cass_file)
+            self.log.debug('Performing single part upload')
+            self._do_single_part_upload(dest_key_name, cass_file)
         return
 
-    def build_keyname(self, cass_file):
+
+    def _s3_conn(self):
+        if self.__s3_conn is not None:
+            return self.__s3_conn
+
+        self.log.debug("Creating S3 connection.")
+        self.__s3_conn = boto.connect_s3(self.s3_config.aws_key, 
+            self.s3_config.aws_secret)
+        self.__s3_conn.retries = self.s3_config.retries
+        return self.__s3_conn
+
+
+    def _bucket(self):
         
+        if self.__bucket is not None:
+            return self.__bucket
 
-        ep = os.path.join(self.s3_config.prefix, cass_file.backup_path())
-        self.log.debug("For file %(cass_file)s aws key is %(ep)s" % vars())
-        return ep
+        self.log.debug("Getting aws bucket %(bucket_name)s" % \
+            vars(self.s3_config))
+        self.__bucket = self._s3_conn().get_bucket(self.s3_config.bucket_name)
+        return self.__bucket
 
-    def _do_upload_index(self, index_json, file_key_name):
+    def _file_exists(self, key_name, meta):
         """
-        """
-
-        if self.snap_config.test_mode:
-            self.log.info("TestMode - _do_upload_index %s" % vars())
-            return
-
-        index_key = self.s3.bucket().new_key(
-                "%(file_key_name)s-listdir.json" % vars())
-        index_key.set_contents_from_string(index_json,
-            headers={'Content-Type': 'application/json'},
-            replace=True)
         
-        return
+        Check if this keyname (ie, file) has already been uploaded to
+        the S3 bucket. This will verify that not only does the keyname
+        exist, but that the MD5 sum is the same -- this protects against
+        partial or corrupt uploads.
+        """
+
+        key = self._bucket().get_key(key_name)
+        if key == None:
+            self.log.debug('Key %(key_name)s does not exist' % vars())
+            return False
+        
+        self.log.debug('Found key %(key_name)s' % vars())
+
+        if key.size != meta["size"]:
+            self.log.warning('ATTENTION: remote file (%s) has different size '
+                ', you should take a look. As immutable files '
+                'never change, one must assume the local file got corrupted '
+                'and the right version is the one in S3. Will skip this file '
+                'to avoid future complications' % (key_name, ))
+            return True
+
+        key_md5 = key.get_metadata('md5sum')
+        if key_md5:
+            result = meta["md5_hex"] == meta
+            self.log.debug('MD5 metadata comparison: %s == %s? : %s' %
+                          (meta["md5_hex"], key_md5, result))
+        else:
+            result = meta["md5_hex"] == key.etag.strip('"')
+            self.log.debug('ETag comparison: %s == %s? : %s' %
+                          (meta["md5_hex"], key.etag.strip('"'),result))            
+            # if result:
+            #     self.log.debug('Setting missing md5sum metadata for '
+            #         ' %(key_name)s' % vars())
+            #     # HACK: bad to write here
+            #     key.set_metadata('md5sum', cass_file.file_meta["md5_hex"])
+        
+        if result:
+            self.log.info("Remote file at key %(key_name)s exists and "\
+                "md5 matches" % vars())
+            return True
+
+        self.log.warning('ATTENTION: remote file (%s) has different '
+            'MD5 hash, you should take a look. As immutable '
+            'files never change, one must assume the local file got '
+            'corrupted and the right version is the one in S3. Will '
+            'skip this file to avoid future complications' % 
+            (key_name, ))
+        return False
 
     def _do_multi_part_upload(self, file_key_name, cass_file):
-
-        if self.snap_config.test_mode:
-            self.log.info("TestMode - _do_multi_part_upload %s" % vars())
-            return
 
         mp = bucket.initiate_multipart_upload(file_key_name,
             metadata=cass_file.file_meta)
@@ -283,13 +252,7 @@ class S3Endpoint(object):
 
     def _do_single_part_upload(self, file_key_name, cass_file):
 
-        if self.snap_config.test_mode:
-            self.log.info("TestMode - _do_single_part_upload %s" % vars())
-            return
-
-        self.log.debug('Performing single part upload')
-
-        key = self.s3.bucket().new_key(file_key_name)
+        key = self._bucket().new_key(file_key_name)
         # All meta data fields have to be strings.
         key.update_metadata({
             k : str(v)
