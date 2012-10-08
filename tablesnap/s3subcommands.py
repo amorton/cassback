@@ -18,7 +18,7 @@ class S3SnapConfig(object):
     """
 
     def __init__(self, bucket_name, aws_key, aws_secret, prefix, 
-        host_name, max_file_size_mb, chunk_size_mb,
+        max_file_size_mb, chunk_size_mb,
         retries):
 
         self.bucket_name = bucket_name
@@ -26,7 +26,6 @@ class S3SnapConfig(object):
         self.aws_secret = aws_secret
         self.bucket_name = bucket_name
         self.prefix = prefix or ""
-        self.host_name = host_name or ""
         self.max_file_size_mb = max_file_size_mb 
         self.chunk_size_mb = chunk_size_mb
         self.retries = retries
@@ -34,7 +33,7 @@ class S3SnapConfig(object):
     @classmethod    
     def from_args(cls, args):
         return S3SnapConfig(args.bucket_name, args.aws_key, args.aws_secret, 
-            args.prefix, args.host_name or socket.getfqdn(), 
+            args.prefix, 
             args.max_upload_size_mb, args.multipart_chunk_size_mb, 
             args.retries)
 
@@ -71,9 +70,6 @@ class S3SnapSubCommand(snapsubcommands.SnapSubCommand):
             default=None, help="AWS API Secret Key")
         parser.add_argument('-p', '--prefix', dest='prefix', default=None,
             help='Set a string prefix for uploaded files in S3')
-        parser.add_argument('-n', '--host-name', dest='host_name', default=None,
-            help="Use this name instead of the FQDN to identify the "\
-                "SSTables from this host.")
         parser.add_argument('--max-upload-size-mb', dest='max_upload_size_mb', 
             type=int, default=5120,
             help='Max size for files to be uploaded before doing multipart ')
@@ -236,11 +232,11 @@ class S3Endpoint(object):
         return
 
     def build_keyname(self, cass_file):
-        file_path = cass_file.file_path
-        key =  '%s%s:%s' % (self.s3_config.prefix, self.s3_config.host_name, 
-            file_path)
-        self.log.debug("For file %(cass_file)s aws key is %(key)s" % vars())
-        return key
+        
+
+        ep = os.path.join(self.s3_config.prefix, cass_file.backup_path())
+        self.log.debug("For file %(cass_file)s aws key is %(ep)s" % vars())
+        return ep
 
     def _do_upload_index(self, index_json, file_key_name):
         """

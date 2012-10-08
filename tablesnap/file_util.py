@@ -6,6 +6,7 @@ import os
 import os.path
 import pwd
 import re
+import socket
 
 import boto.utils
 
@@ -165,6 +166,22 @@ class CassandraFile(object):
         log.debug("Got file meta %(_file_meta)s " % vars(self))
         return self._file_meta
 
+    def backup_path(self, host=None):
+        """Gets the relative path to backup this file to. 
+        """
+
+        _, file_name = os.path.split(self.file_path)
+        return os.path.join(*(
+            "hosts",
+            host or socket.getfqdn(),
+            self.descriptor.ks_name,
+            self.descriptor.cf_name,
+            file_name,
+        ))
+
+
+
+# Here be JUNK
 def _file_index(file_path):
 
     dirname = os.path.dirname(file_path)

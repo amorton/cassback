@@ -83,12 +83,9 @@ class LocalEndpoint(object):
 
     def endpoint_path(self, cass_file):
         
-        file_path = cass_file.file_path
-        if file_path.startswith("/"):
-            file_path = file_path[1:]
+        ep = os.path.join(self.local_config.dest_base, 
+            cass_file.backup_path())
 
-        ep = os.path.join(self.local_config.dest_base, file_path)
-        
         self.log.debug("Endpoint path for %(cass_file)s is %(ep)s"\
             % vars())
         return ep
