@@ -21,19 +21,22 @@ class SnapConfig(object):
     """General config for storing files.
     """
 
-    def __init__(self, watch_path, threads, recursive, auto_add, skip_index,
-        test_mode):
-        self.watch_path = watch_path
+    def __init__(self, cassandra_data_dir, threads, recursive, auto_add, skip_index,
+        test_mode, exclude_keyspaces, include_system_keyspace):
+        self.cassandra_data_dir = cassandra_data_dir
         self.threads = threads
         self.recursive = recursive
         self.auto_add = auto_add
         self.skip_index = skip_index
         self.test_mode = test_mode
+        self.exclude_keyspaces = exclude_keyspaces
+        self.include_system_keyspace = include_system_keyspace 
 
     @classmethod
     def from_args(cls, args):
-        return SnapConfig(args.watch_path, args.threads, args.recursive,
-            args.auto_add, args.skip_index, args.test_mode)
+        return SnapConfig(args.cassandra_data_dir, args.threads, args.recursive,
+            args.auto_add, args.skip_index, args.test_mode, 
+            args.exclude_keyspace or [], args.include_system_keyspace)
 
         
 class SnapSubCommand(subcommands.SubCommand):
@@ -61,12 +64,21 @@ class SnapSubCommand(subcommands.SubCommand):
             action='store_true', dest='skip_index', default=False,
             help="Disable storing a JSON index of all files in the snapshot.")
 
+        common_args.add_argument('--exclude-keyspace', 
+            dest='exclude_keyspace', nargs="*",
+            help="User keyspaces to exclude from backup.")
+        
+        common_args.add_argument('--include-system-keyspace', default=False,
+            dest='include_system_keyspace', action="store_true",
+            help="Include the system keyspace.")
+
         common_args.add_argument('--test_mode', 
             action='store_true', dest='test_mode', default=False,
             help="Do not upload .")
 
-        common_args.add_argument('watch_path', 
-            help='Path to watch.')
+        common_args.add_argument("cassandra_data_dir", 
+            help="Top level Cassandra data directory, normally "\
+            "/var/lib/cassandra/data.")
 
         return common_args
 
@@ -82,7 +94,7 @@ class SnapSubCommand(subcommands.SubCommand):
         file_q = Queue.Queue()
 
         # Make a watcher
-        watcher = WatchdogWatcher(self.snap_config.watch_path, file_q)
+        watcher = WatchdogWatcher(self.snap_config, file_q)
 
         # Make worker threads
         self.workers = [
@@ -154,10 +166,10 @@ class WatchdogWatcher(events.FileSystemEventHandler):
     """Watch the disk for new files."""
     log = logging.getLogger("%s.%s" % (__name__, "WatchdogWatcher"))
 
-    def __init__(self, watch_path, file_q, refresh=True, 
+    def __init__(self, snap_config, file_q, refresh=True, 
         watch=True):
         
-        self.watch_path = watch_path
+        self.snap_config = snap_config
         self.file_q = file_q
         self.refresh = refresh
         self.watch = watch
@@ -167,7 +179,8 @@ class WatchdogWatcher(events.FileSystemEventHandler):
         # initial read
         # always recursive for now
         if self.refresh:
-            for root, dirs, files in os.walk(self.watch_path):
+            self.log.info("Refreshing existing files.")
+            for root, dirs, files in os.walk(self.snap_config.cassandra_data_dir):
                 for filename in files:
                     self._maybe_queue_file(os.path.join(root, filename))
 
@@ -176,7 +189,11 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             return 
 
         observer = observers.Observer()
-        observer.schedule(self, path=self.watch_path, recursive=True)
+        observer.schedule(self, path=self.snap_config.cassandra_data_dir, 
+            recursive=True)
+        self.log.info("Watching for new file under %(cassandra_data_dir)s." %\
+            vars(self.snap_config))
+
         observer.start()
         try:
             while True:
@@ -198,13 +215,26 @@ class WatchdogWatcher(events.FileSystemEventHandler):
                 vars())
             return False
 
-        if cass_file.should_backup():
-            self.log.info("Queued file %(file_path)s" % vars())
-            self.file_q.put(cass_file)
-            return True
+        if not cass_file.should_backup():
+            self.log.info("Ignoring file %(cass_file)s" % vars())
+            return False
 
-        self.log.info("Ignoring file %(file_path)s" % vars())
-        return False
+        if cass_file.descriptor.ks_name in self.snap_config.exclude_keyspaces:
+            self.log.info("Ignoring file %s from excluded "\
+                "keyspace %s" % (cass_file, cass_file.descriptor.ks_name))
+            return False
+
+        if (cass_file.descriptor.ks_name.lower() == "system") and (
+            not self.snap_config.include_system_keyspace):
+
+            self.log.info("Ignoring system keyspace file %(cass_file)s"\
+                % vars())
+            return False
+
+        self.log.info("Queueing file %(cass_file)s"\
+            % vars())
+        self.file_q.put(cass_file)
+        return True
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Watchdog file events.

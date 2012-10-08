@@ -79,8 +79,12 @@ def tablesnap_main():
     try:
         # parsing the args works out which function we want to call.
         sub_command = args.func(args)
+        if callable(sub_command):
+            out = sub_command()
+        else:
+            out = sub_command
         _log.debug("Calling sub command %(sub_command)s" % vars())
-        sys.stdout.write(str(sub_command())) 
+        sys.stdout.write(out) 
     except (Exception) as exc:
         print "Error:"
         traceback.print_exc()
