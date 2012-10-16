@@ -182,14 +182,31 @@ class CassandraFile(object):
 
 class KeyspaceManifest(object):
 
-    def __init__(self, data_dir, ks_name):
-        self.data_dir = data_dir
+    def __init__(self, ks_name, host, backup_name, timestamp, 
+        column_families):
+        
         self.ks_name = ks_name
-        self.timestamp = datetime.datetime.now().isoformat()
+        self.host = host
+        self.backup_name = backup_name
+
+        self.manifest = {
+            "host" : host,
+            "keyspace" : ks_name,
+            "timestamp" : timestamp,
+            "name" : backup_name,
+            "column_families" : column_families
+        }
+
+    @classmethod
+    def from_dir(cls, data_dir, ks_name):
+
+        timestamp = datetime.datetime.now().isoformat()
+        safe_ts = timestamp.replace(":", "_").replace(".", "_"
+            ).replace("-", "_")
+        backup_name = "%s-%s" % (safe_ts, socket.getfqdn())
 
         # Get a list of the files in each CF for this KS.
         # generate a list of (cf_name, cf_file_name)
-
         def gen_cf_files():
             # in cassandra 1.1 file layout is 
             # ks/cf/sstable-component
@@ -212,28 +229,31 @@ class KeyspaceManifest(object):
                 if not desc.temporary:
                     column_families.setdefault(cf_name, []).append(file_name)
 
-        self.manifest = {
-            "host" : socket.getfqdn(),
-            "keyspace" : self.ks_name,
-            "timestamp" : self.timestamp,
-            "column_families" : column_families
-        }
-
+        return cls(ks_name, socket.getfqdn(), backup_name, timestamp, 
+            column_families)
 
     def backup_path(self):
         """Gets the relative path to backup the keyspace manifest to."""
 
         # Would preferer to use the token here. 
 
-        safe_ts = self.timestamp.replace(":", "_").replace(".", "_")
-        file_name = "%s-%s.json" % (safe_ts, socket.getfqdn())
-
+        
+        file_name = "%s.json" % (self.backup_name)
         return os.path.join(*(
             "cluster",
             self.ks_name,
             file_name
             ))
 
+    @classmethod
+    def keyspace_path(cls, keyspace):
+        return os.path.join(*("cluster", keyspace))
+
+    @classmethod
+    def is_for_host(cls, manifest_file_name, host):
+
+        name, _ = os.path.splitext(manifest_file_name)
+        return name.endswith("-%s" % (host,))
 
 # Here be JUNK
 def _file_index(file_path):

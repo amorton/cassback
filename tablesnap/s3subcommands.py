@@ -11,7 +11,10 @@ import socket
 
 import boto, boto.utils
 
-import file_util, snapsubcommands
+import file_util, subcommands
+
+# ============================================================================
+#
 
 class S3SnapConfig(object):
     """S3 config. 
@@ -45,7 +48,10 @@ class S3SnapConfig(object):
     def chunk_size_bytes(self):
         return self.chunk_size_mb * 2 ** 20
 
-class S3SnapSubCommand(snapsubcommands.SnapSubCommand):
+# ============================================================================
+#
+
+class S3SnapSubCommand(subcommands.SnapSubCommand):
     """SubCommand to store a file in S3. 
     """
 
@@ -307,3 +313,46 @@ class S3Endpoint(object):
         d = dict(lines)
         return d['Cached'] + d['MemFree'] + d['Buffers']
 
+# ============================================================================
+#
+
+class S3ListSubCommand(subcommands.ListSubCommand):
+    """
+    """
+
+    log = logging.getLogger("%s.%s" % (__name__, "S3ListSubCommand"))
+
+    # command description used by the base 
+    command_name = "list-s3"
+    command_help = "List S3 backups"
+    command_description = "List S3 backups"
+
+    @classmethod
+    def add_sub_parser(cls, sub_parsers):
+        """Called to add a parser to ``sub_parsers`` for this command. 
+        """
+        
+        parser = super(S3ListSubCommand, cls).add_sub_parser(sub_parsers)
+        LocalConfig.update_parser(parser)
+        return parser
+
+    def __init__(self, args):
+        super(LocalListSubCommand, self).__init__(args)
+        self.local_config = LocalConfig.from_args(args)
+
+    def _list_manifests(self, keyspace, host, list_all):
+
+        dest_manifest_path = os.path.join(self.local_config.dest_base, 
+            file_util.KeyspaceManifest.keyspace_path(keyspace))
+
+        _, _, all_files = os.walk(dest_manifest_path).next()
+        host_files = [
+            f
+            for f in all_files
+            if file_util.KeyspaceManifest.is_for_host(f, host)
+        ]
+
+        if list_all:
+            return host_files
+
+        return [max(host_files),]

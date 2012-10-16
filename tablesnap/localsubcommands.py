@@ -8,21 +8,12 @@ import os
 import shutil
 import socket
 
-import file_util, snapsubcommands
+import file_util, subcommands
 
-class LocalConfig(object):
-    """Local config. 
-    """
+# ============================================================================
+#
 
-    def __init__(self, dest_base):
-
-        self.dest_base = dest_base
-
-    @classmethod    
-    def from_args(cls, args):
-        return LocalConfig(args.dest_base)
-
-class LocalSnapSubCommand(snapsubcommands.SnapSubCommand):
+class LocalSnapSubCommand(subcommands.SnapSubCommand):
     """SubCommand to store SSTables locally
     """
 
@@ -33,50 +24,38 @@ class LocalSnapSubCommand(snapsubcommands.SnapSubCommand):
     command_help = "Copy new SSTables to locally"
     command_description = "Copy new SSTables to locally"
 
-
     @classmethod
     def add_sub_parser(cls, sub_parsers):
         """Called to add a parser to ``sub_parsers`` for this command. 
         """
         
         parser = super(LocalSnapSubCommand, cls).add_sub_parser(sub_parsers)
-
-        parser.add_argument('dest_base', default=None,
+        parser.add_argument('backup_base', default=None,
             help="Base destination path.")
 
         return parser
 
-    def __init__(self, args):
-        super(LocalSnapSubCommand, self).__init__(args)
-        self.local_config = LocalConfig.from_args(args)
+    def _create_worker_thread(self, i, file_queue, args):
+        return LocalSnapWorkerThread(i, file_queue, args)
 
-    def _create_endpoint(self):
-        return LocalEndpoint(copy.deepcopy(self.snap_config),
-            copy.deepcopy(self.local_config))
+class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
+    log = logging.getLogger("%s.%s" % (__name__, "LocalSnapWorkerThread"))
 
-
-class LocalEndpoint(object):
-    log = logging.getLogger("%s.%s" % (__name__, "LocalEndpoint"))
-
-    def __init__(self, snap_config, local_config):
-
-        self.snap_config = snap_config
-        self.local_config = local_config
-
-    def store(self, ks_manifest, cass_file):
+    def _store(self, ks_manifest, cass_file):
         """Called up upload the ``cass_file``.
         """
         
         if self.is_file_stored(cass_file):
-            self.log.warn("Endpoint path %(endpoint_path)s for file "\
+            # CRAP:
+            self.log.warn("file "\
                 "%(cass_file)s exists skipping" % vars())
             return
 
         # Store the keyspace manifest
-        dest_manifest_path = os.path.join(self.local_config.dest_base, 
+        dest_manifest_path = os.path.join(self.args.backup_base, 
             ks_manifest.backup_path())
 
-        if self.snap_config.test_mode:
+        if self.args.test_mode:
             self.log.info("TestMode -  store keyspace manifest to "\
                 "%(dest_manifest_path)s" % vars())
         else:
@@ -85,10 +64,10 @@ class LocalEndpoint(object):
                 f.write(json.dumps(ks_manifest.manifest))
         
         # Store the cassandra file
-        dest_file_path = os.path.join(self.local_config.dest_base, 
+        dest_file_path = os.path.join(self.args.backup_base, 
             cass_file.backup_path())
 
-        if self.snap_config.test_mode:
+        if self.args.test_mode:
             self.log.info("TestMode - store file to %(dest_file_path)s"\
                  % vars())
         else:
@@ -113,3 +92,47 @@ class LocalEndpoint(object):
             os.makedirs(os.path.dirname(path))
         return
     
+
+# ============================================================================
+#
+
+
+class LocalListSubCommand(subcommands.ListSubCommand):
+    """SubCommand to list backups
+    """
+
+    log = logging.getLogger("%s.%s" % (__name__, "LocalListSubCommand"))
+
+    # command description used by the base 
+    command_name = "list-local"
+    command_help = "List local backup files"
+    command_description = "List local backup files"
+
+    @classmethod
+    def add_sub_parser(cls, sub_parsers):
+        """Called to add a parser to ``sub_parsers`` for this command. 
+        """
+        
+        parser = super(LocalListSubCommand, cls).add_sub_parser(sub_parsers)
+        parser.add_argument('backup_base', default=None,
+            help="Base destination path.")
+
+        return parser
+
+
+    def _list_manifests(self):
+
+        dest_manifest_path = os.path.join(self.args.backup_base, 
+            file_util.KeyspaceManifest.keyspace_path(self.args.keyspace))
+
+        _, _, all_files = os.walk(dest_manifest_path).next()
+        host_files = [
+            f
+            for f in all_files
+            if file_util.KeyspaceManifest.is_for_host(f, self.args.host)
+        ]
+
+        if self.args.list_all:
+            return host_files
+
+        return [max(host_files),]

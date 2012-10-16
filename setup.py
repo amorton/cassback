@@ -7,6 +7,7 @@ tablesnap = tablesnap.scripts:tablesnap_main
 [tablesnap.sub_commands]
 S3SnapSubCommand = tablesnap.s3subcommands:S3SnapSubCommand
 LocalSnapSubCommand = tablesnap.localsubcommands:LocalSnapSubCommand
+LocalListSubCommand = tablesnap.localsubcommands:LocalListSubCommand
 """
 
 setup(
