@@ -10,6 +10,7 @@ import socket
 
 import file_util, subcommands
 
+
 # ============================================================================
 #
 
@@ -53,7 +54,7 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
 
         # Store the keyspace manifest
         dest_manifest_path = os.path.join(self.args.backup_base, 
-            ks_manifest.backup_path())
+            ks_manifest.path)
 
         if self.args.test_mode:
             self.log.info("TestMode -  store keyspace manifest to "\
@@ -61,11 +62,11 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
         else:
             self._ensure_dir(dest_manifest_path)
             with open(dest_manifest_path, "w") as f:
-                f.write(json.dumps(ks_manifest.manifest))
+                f.write(json.dumps(ks_manifest.to_manifest()))
         
         # Store the cassandra file
         dest_file_path = os.path.join(self.args.backup_base, 
-            cass_file.backup_path())
+            cass_file.backup_path)
 
         if self.args.test_mode:
             self.log.info("TestMode - store file to %(dest_file_path)s"\
@@ -76,7 +77,7 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
 
             self._ensure_dir(dest_meta_path)
             with open(dest_meta_path, "w") as f:
-                f.write(json.dumps(cass_file.file_meta))
+                f.write(json.dumps(cass_file.meta))
             
             # copy the file
             shutil.copy(cass_file.file_path, dest_file_path)
@@ -95,7 +96,6 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
 
 # ============================================================================
 #
-
 
 class LocalListSubCommand(subcommands.ListSubCommand):
     """SubCommand to list backups
@@ -136,3 +136,78 @@ class LocalListSubCommand(subcommands.ListSubCommand):
             return host_files
 
         return [max(host_files),]
+
+# ============================================================================
+#
+
+class LocalValidateSubCommand(subcommands.ValidateSubCommand):
+    """
+    """
+
+    log = logging.getLogger("%s.%s" % (__name__, "LocalValidateSubCommand"))
+
+    # command description used by the base 
+    command_name = "validate-local"
+    command_help = "Validate local backups"
+    command_description = "Validatelocal backups"
+
+    @classmethod
+    def add_sub_parser(cls, sub_parsers):
+        """Called to add a parser to ``sub_parsers`` for this command. 
+        """
+        
+        parser = super(LocalValidateSubCommand, cls).add_sub_parser(sub_parsers)
+        parser.add_argument('backup_base', default=None,
+            help="Base destination path.")
+
+        return parser
+
+
+    def _load_manifest(self):
+
+        dest_manifest_path = os.path.join(self.args.backup_base, 
+            file_util.KeyspaceManifest.manifest_path(self.args.keyspace,
+                self.args.backup_name))
+
+        with open(dest_manifest_path, "r") as f:
+            return file_util.KeyspaceManifest.from_manifest(
+                json.loads(f.read()))
+
+    def _load_remote_file_info(self, host, file_name):
+
+        cass_file = file_util.CassandraFile.from_file_path(file_name, meta={}, 
+            host=host)
+
+        meta_path = os.path.join(*(
+            self.args.backup_base, 
+            cass_file.backup_path + "-meta.json"))
+        try:
+            with open(meta_path, "r") as f:
+                cass_file.meta = json.loads(f.read())
+        except (EnvironmentError) as e:
+            if e.errno == errno.ENOENT:
+                # not found, just return None to say we could not load remote
+                # file info
+                return None
+
+        return cass_file
+
+
+    def _file_exists(self, backup_file):
+
+        file_path = os.path.join(self.args.backup_base, 
+            backup_file.backup_path)
+
+        return os.path.isfile(file_path)
+
+    def _checksum_file(self, backup_file):
+
+
+        backup_md5_hex = backup_file.meta.get("md5_hex")
+
+        file_path = os.path.join(self.args.backup_base, 
+            backup_file.backup_path)
+
+        current_md5_hex, _  = file_util.file_md5(file_path)
+        return current_md5_hex == backup_md5_hex
+

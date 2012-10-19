@@ -249,6 +249,10 @@ class WatchdogWatcher(events.FileSystemEventHandler):
 
     def _maybe_queue_file(self, file_path):
 
+        if file_util.is_snapshot_path(file_path):
+            self.log.info("Ignoring snapshot path %(file_path)s" % vars())
+            return False
+
         try:
             cass_file = file_util.CassandraFile.from_file_path(file_path)
         except (ValueError):
@@ -256,16 +260,16 @@ class WatchdogWatcher(events.FileSystemEventHandler):
                 vars())
             return False
 
-        if not cass_file.should_backup():
-            self.log.info("Ignoring file %(cass_file)s" % vars())
+        if cass_file.descriptor.temporary:
+            self.log.info("Ignoring temporary file %(cass_file)s" % vars())
             return False
 
-        if cass_file.descriptor.ks_name in self.exclude_keyspaces:
+        if cass_file.descriptor.keyspace in self.exclude_keyspaces:
             self.log.info("Ignoring file %s from excluded "\
-                "keyspace %s" % (cass_file, cass_file.descriptor.ks_name))
+                "keyspace %s" % (cass_file, cass_file.descriptor.keyspace))
             return False
 
-        if (cass_file.descriptor.ks_name.lower() == "system") and (
+        if (cass_file.descriptor.keyspace.lower() == "system") and (
             not self.include_system_keyspace):
 
             self.log.info("Ignoring system keyspace file %(cass_file)s"\
@@ -273,7 +277,7 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             return False
 
         ks_manifest = file_util.KeyspaceManifest.from_dir(
-            self.data_dir, cass_file.descriptor.ks_name)
+            self.data_dir, cass_file.descriptor.keyspace)
         self.log.info("Queueing file %(cass_file)s"\
             % vars())
         self.file_queue.put((ks_manifest, cass_file))
@@ -337,11 +341,110 @@ class ListSubCommand(SubCommand):
         self.log.info("Finished sub command %s" % self.command_name)
         return "\n".join(buffer) 
 
-    def _list_manifests(self, keyspace, host, list_all):
+    def _list_manifests(self):
         """Called to create an endpoint to be used with a worker thread.
 
         Sublcasses must implement this.
         """
+        raise NotImplementedError()
+
+# ============================================================================
+# Validate - validate that all files in a backup are present
+
+class ValidateSubCommand(SubCommand):
+    """Base for Sub Commands that watch and backup files. 
+    """
+
+    @classmethod
+    def _common_args(cls):
+        """Returns a :class:`argparser.ArgumentParser` with the common 
+        arguments for this Command hierarchy.
+        """
+
+        common_args = super(ValidateSubCommand, cls)._common_args()
+
+        common_args.add_argument("--checksum",
+            action='store_true', dest='checksum', default=False,
+            help="Do an MD5 checksum of the files.")
+
+        common_args.add_argument("keyspace",
+            help="Keyspace to that contains the backup.")
+        common_args.add_argument('backup_name',  
+            help="Backup to validate.")
+
+        return common_args
+
+    def __init__(self, args):
+        self.args = args
+
+    def __call__(self):
+
+        self.log.info("Starting sub command %s" % self.command_name)
+
+        manifest = self._load_manifest()
+
+        missing_files = []
+        present_files = []
+        corrupt_files = []
+
+        for cf_name, file_name in manifest.yield_file_names():
+            cass_file = self._load_remote_file_info(manifest.host, 
+                file_name)
+
+            if cass_file is None:
+                # Could not load the remote file info, let's say the file is
+                # missing
+                missing_files.append(file_name)
+            elif self._file_exists(cass_file):
+                if not self.args.checksum:
+                    present_files.append(file_name)
+                elif self._checksum_file(cass_file):
+                    present_files.append(file_name)
+                else:
+                    corrupt_files.append(file_name)
+            else:
+                missing_files.append(file_name)
+
+        buffer = []
+        if missing_files or corrupt_files:
+            buffer.append("Missing or corrupt files found for backup "\
+                "%s" % (self.args.backup_name,))
+        else:
+            buffer.append("All files present for backup %s"\
+                 % (self.args.backup_name,))
+
+        if self.args.checksum:
+            buffer.append("Files were checksummed")
+        else:
+            buffer.append("Files were not checksummed")
+
+        buffer.append("")
+
+        if corrupt_files:
+            buffer.append("Corrupt Files:")
+            buffer.extend(corrupt_files)
+
+        if missing_files:
+            buffer.append("Missing Files:")
+            buffer.extend(missing_files)
+
+        if present_files:
+            buffer.append("Files:")
+            buffer.extend(present_files)
+
+        self.log.info("Finished sub command %s" % self.command_name)
+        return "\n".join(buffer) 
+
+    def _load_manifest(self):
+        raise NotImplementedError()
+
+    def _load_remote_file_info(self, host, file_name):
+        raise NotImplementedError()
+
+    def _file_exists(self, backup_file):
+        raise NotImplementedError()
+
+    def _checksum_file(self, backup_file):
         raise NotImplementedError()
 
 

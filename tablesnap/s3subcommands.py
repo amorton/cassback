@@ -121,7 +121,7 @@ class S3Endpoint(object):
         dest_key_name = os.path.join(self.s3_config.prefix, 
             cass_file.backup_path())
 
-        if self._file_exists(dest_key_name, cass_file.file_meta):
+        if self._file_exists(dest_key_name, cass_file.meta):
             self.log.warn("S3 Key %(dest_key_name)s for file %(cass_file)s, "\
                 "exists skipping" % vars())
             return
@@ -141,10 +141,10 @@ class S3Endpoint(object):
                 replace=True)
         
         # Store the backup file
-        is_multipart_upload = cass_file.file_meta["size"] > \
+        is_multipart_upload = cass_file.meta["size"] > \
             self.s3_config.max_file_size_bytes
         self.log.debug('File size check: %s > %s ? : %s' %
-            (cass_file.file_meta["size"], self.s3_config.max_file_size_bytes,
+            (cass_file.meta["size"], self.s3_config.max_file_size_bytes,
             is_multipart_upload))
 
         if self.snap_config.test_mode:
@@ -236,7 +236,7 @@ class S3Endpoint(object):
     def _do_multi_part_upload(self, file_key_name, cass_file):
 
         mp = bucket.initiate_multipart_upload(file_key_name,
-            metadata=cass_file.file_meta)
+            metadata=cass_file.meta)
         
         chunk = None
         try:
@@ -262,13 +262,13 @@ class S3Endpoint(object):
         # All meta data fields have to be strings.
         key.update_metadata({
             k : str(v)
-            for k, v in cass_file.file_meta.iteritems()
+            for k, v in cass_file.meta.iteritems()
         })
         # Rebuild the MD5 tuple boto makes
         md5 = (
-            cass_file.file_meta["md5_hex"], 
-            cass_file.file_meta["md5_base64"], 
-            cass_file.file_meta["size"]
+            cass_file.meta["md5_hex"], 
+            cass_file.meta["md5_base64"], 
+            cass_file.meta["size"]
         )
         key.set_contents_from_filename(cass_file.file_path, replace=True,
             md5=md5)

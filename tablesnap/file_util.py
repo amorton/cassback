@@ -25,6 +25,63 @@ FILE_VERSION_PATTERN = re.compile("[a-z]+")
 
 log = logging.getLogger(__name__)
 
+
+def file_md5(file_path):
+
+    fp = open(file_path, 'rb')
+    try:
+        # returns tuple (md5_hex, md5_base64, file_size)
+        md5 = boto.utils.compute_md5(fp)
+    finally:
+        fp.close()
+    return (md5[0], md5[1])
+
+def file_meta(file_path):
+    """Get a dict of the os file meta for this file. 
+    """
+
+    log.debug("Getting meta data for %(file_path)s" % vars())
+    stat = os.stat(file_path)
+
+    file_meta = {'uid': stat.st_uid,
+        'gid': stat.st_gid,
+        'mode': stat.st_mode,
+        "size" : stat.st_size
+    }
+
+    try:
+        file_meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
+    except (EnvironmentError):
+        log.debug("Ignoring error getting user name.", exc_info=True)
+        file_meta['user'] = ""
+
+    try:
+        file_meta['group'] = grp.getgrgid(stat.st_gid).gr_name
+    except (EnvironmentError):
+        log.debug("Ignoring error getting group name.", exc_info=True)
+        file_meta['group'] = ""
+
+    md5 = file_md5(file_path) 
+    file_meta["md5_hex"] = md5[0]
+    file_meta["md5_base64"] = md5[1]
+
+    log.debug("For %(file_path)s got file meta %(file_meta)s " % vars())
+    return file_meta
+
+def is_snapshot_path(file_path):
+
+    head = os.path.dirname(file_path)
+    if not head:
+        raise ValueError("file_path does not include directory")
+    while head != "/":
+        head, tail = os.path.split(head)
+        if tail == "snapshots":
+            return True
+    return False
+
+# ============================================================================
+# 
+
 class Descriptor(object):
     """Implementation of o.a.c.io.sstable.Descriptor in the Cassandra 
     code base.
@@ -34,10 +91,10 @@ class Descriptor(object):
     Use :func:`from_file_path` to create instances.
     """
 
-    def __init__(self, ks_name, cf_name, version, 
+    def __init__(self, keyspace, cf_name, version, 
         generation, temporary):
 
-        self.ks_name = ks_name
+        self.keyspace = keyspace
         self.cf_name = cf_name
         self.major_version = version[0]
         self.minor_version = version[1] if len(version) > 1 else None
@@ -69,7 +126,7 @@ class Descriptor(object):
                 raise ValueError("Not a valid SSTable file path "\
                     "%s" % (file_path,))
         
-        ks_name = safe_pop()
+        keyspace = safe_pop()
         cf_name = safe_pop()
 
         temporary = safe_peek() == TEMPORARY_MARKER
@@ -85,120 +142,68 @@ class Descriptor(object):
         generation = int(safe_pop())
         component = safe_pop()
 
-        return (component, Descriptor(ks_name, cf_name, version, generation, 
+        return (component, Descriptor(keyspace, cf_name, version, generation, 
             temporary))
+
+# ============================================================================
+#
 
 class CassandraFile(object):
     """
     """
 
-    def __init__(self, file_path, descriptor, component):
+    @classmethod
+    def from_file_path(cls, file_path, host=None, meta=None):
 
-        assert os.path.dirname(file_path), "file_path does not inlcude dir"
+        component, descriptor = Descriptor.from_file_path(file_path)
+        if meta is None:
+            meta = file_meta(file_path)
+        if host is None:
+            host = socket.getfqdn()
+        return CassandraFile(file_path, descriptor, component, host, meta)
+
+
+    def __init__(self, file_path, descriptor, component, host, meta):
+
         self.file_path = file_path
         self.descriptor = descriptor
         self.component = component
-        self._file_meta = None
+        self.host = host
+        self.meta = meta
 
     def __str__(self):
         return self.file_path
 
-    @classmethod
-    def from_file_path(cls, file_path):
-
-        component, descriptor = Descriptor.from_file_path(file_path)
-        return CassandraFile(file_path, descriptor, component)
-
-    def in_snapshot(self):
-        """Returns ``True`` if this file is in a snapshot."""
-
-        head = os.path.dirname(self.file_path)
-        while head != "/":
-            head, tail = os.path.split(head)
-            if tail == "snapshots":
-                return True
-        return False
-
-    def should_backup(self):
-        """Returns ``True`` if this file should be backed up. 
-        """
-        return (self.descriptor.temporary == False) and \
-            (self.in_snapshot() == False)
-
     @property
-    def file_meta(self):
-        """Get a dict of the os file meta for this file. 
-        """
-
-        if self._file_meta is not None:
-            return self._file_meta
-
-        log.debug("Getting meta data for %(file_path)s" % vars(self))
-        stat = os.stat(self.file_path)
-
-        self._file_meta = {'uid': stat.st_uid,
-            'gid': stat.st_gid,
-            'mode': stat.st_mode,
-            "size" : stat.st_size
-        }
-
-        try:
-            self._file_meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
-        except (EnvironmentError):
-            log.debug("Ignoring error getting user name.", exc_info=True)
-            self._file_meta['user'] = ""
-
-        try:
-            self._file_meta['group'] = grp.getgrgid(stat.st_gid).gr_name
-        except (EnvironmentError):
-            log.debug("Ignoring error getting group name.", exc_info=True)
-            self._file_meta['group'] = ""
-
-        fp = open(self.file_path, 'rb')
-        try:
-            # returns tuple (md5_hex, md5_base64, file_size)
-            md5 = boto.utils.compute_md5(fp)
-        finally:
-            fp.close()
-        self._file_meta["md5_hex"] = md5[0]
-        self._file_meta["md5_base64"] = md5[1]
-        assert md5[2] == stat.st_size, "File size is different."
-
-        log.debug("Got file meta %(_file_meta)s " % vars(self))
-        return self._file_meta
-
-    def backup_path(self, host=None):
+    def backup_path(self):
         """Gets the relative path to backup this file to. 
         """
 
         _, file_name = os.path.split(self.file_path)
         return os.path.join(*(
             "hosts",
-            host or socket.getfqdn(),
-            self.descriptor.ks_name,
+            self.host,
+            self.descriptor.keyspace,
             self.descriptor.cf_name,
             file_name,
         ))
 
+# ============================================================================
+#
+
 class KeyspaceManifest(object):
 
-    def __init__(self, ks_name, host, backup_name, timestamp, 
+    def __init__(self, keyspace, host, backup_name, timestamp, 
         column_families):
         
-        self.ks_name = ks_name
+        self.keyspace = keyspace
         self.host = host
         self.backup_name = backup_name
-
-        self.manifest = {
-            "host" : host,
-            "keyspace" : ks_name,
-            "timestamp" : timestamp,
-            "name" : backup_name,
-            "column_families" : column_families
-        }
+        self.timestamp = timestamp
+        self.column_families = column_families
 
     @classmethod
-    def from_dir(cls, data_dir, ks_name):
+    def from_dir(cls, data_dir, keyspace):
 
         timestamp = datetime.datetime.now().isoformat()
         safe_ts = timestamp.replace(":", "_").replace(".", "_"
@@ -211,7 +216,7 @@ class KeyspaceManifest(object):
             # in cassandra 1.1 file layout is 
             # ks/cf/sstable-component
 
-            ks_dir = os.path.join(data_dir, ks_name)
+            ks_dir = os.path.join(data_dir, keyspace)
             _, cf_dirs, _ = os.walk(ks_dir).next()
             for cf_dir in cf_dirs:
                 _, _, cf_files = os.walk(os.path.join(ks_dir, cf_dir)).next()
@@ -229,21 +234,25 @@ class KeyspaceManifest(object):
                 if not desc.temporary:
                     column_families.setdefault(cf_name, []).append(file_name)
 
-        return cls(ks_name, socket.getfqdn(), backup_name, timestamp, 
+        return cls(keyspace, socket.getfqdn(), backup_name, timestamp, 
             column_families)
 
-    def backup_path(self):
-        """Gets the relative path to backup the keyspace manifest to."""
+    @classmethod
+    def from_manifest(cls, manifest):
 
-        # Would preferer to use the token here. 
+        return cls(manifest["keyspace"], manifest["host"], 
+            manifest["name"], manifest["timestamp"], 
+            manifest["column_families"])
 
-        
-        file_name = "%s.json" % (self.backup_name)
+    @classmethod
+    def manifest_path(self, keyspace, backup_name):
+        """
+        """
         return os.path.join(*(
             "cluster",
-            self.ks_name,
-            file_name
-            ))
+            keyspace,
+            "%s.json" % (backup_name,)
+        ))
 
     @classmethod
     def keyspace_path(cls, keyspace):
@@ -254,6 +263,31 @@ class KeyspaceManifest(object):
 
         name, _ = os.path.splitext(manifest_file_name)
         return name.endswith("-%s" % (host,))
+
+    @property
+    def path(self):
+        """Gets the relative path to backup the keyspace manifest to."""
+
+        # Would preferer to use the token here. 
+        return KeyspaceManifest.manifest_path(self.keyspace, self.backup_name)
+
+    def to_manifest(self):
+        return {
+            "host" : self.host,
+            "keyspace" : self.keyspace,
+            "timestamp" : self.timestamp,
+            "name" : self.backup_name,
+            "column_families" : self.column_families
+        }
+
+    def yield_file_names(self):
+        """ 
+        """
+
+        for cf_name, cf_file_names in self.column_families.iteritems():
+            for file_name in cf_file_names:
+                yield (cf_name, file_name)
+
 
 # Here be JUNK
 def _file_index(file_path):
