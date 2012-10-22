@@ -8,7 +8,7 @@ import os
 import shutil
 import socket
 
-import file_util, subcommands
+import file_util, cassandra, subcommands
 
 
 # ============================================================================
@@ -54,7 +54,7 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
 
         # Store the keyspace manifest
         dest_manifest_path = os.path.join(self.args.backup_base, 
-            ks_manifest.path)
+            ks_manifest.backup_path)
 
         if self.args.test_mode:
             self.log.info("TestMode -  store keyspace manifest to "\
@@ -123,19 +123,22 @@ class LocalListSubCommand(subcommands.ListSubCommand):
     def _list_manifests(self):
 
         dest_manifest_path = os.path.join(self.args.backup_base, 
-            file_util.KeyspaceManifest.keyspace_path(self.args.keyspace))
+            cassandra.KeyspaceManifest.backup_dir(self.args.keyspace))
 
         _, _, all_files = os.walk(dest_manifest_path).next()
-        host_files = [
-            f
-            for f in all_files
-            if file_util.KeyspaceManifest.is_for_host(f, self.args.host)
-        ]
+
+        host_manifests = []
+        for f in all_files:
+            backup_name, _ = os.path.splitext(f)
+            manifest = cassandra.KeyspaceManifest.from_backup_name(
+                backup_name)
+            if manifest.host == self.args.host:
+                host_manifests.append(f)
 
         if self.args.list_all:
-            return host_files
+            return host_manifests
 
-        return [max(host_files),]
+        return [max(host_manifests),]
 
 # ============================================================================
 #
@@ -165,17 +168,19 @@ class LocalValidateSubCommand(subcommands.ValidateSubCommand):
 
     def _load_manifest(self):
 
+        empty_manifest = cassandra.KeyspaceManifest.from_backup_name(
+            self.args.backup_name)
+
         dest_manifest_path = os.path.join(self.args.backup_base, 
-            file_util.KeyspaceManifest.manifest_path(self.args.keyspace,
-                self.args.backup_name))
+            empty_manifest.backup_path)
 
         with open(dest_manifest_path, "r") as f:
-            return file_util.KeyspaceManifest.from_manifest(
+            return cassandra.KeyspaceManifest.from_manifest(
                 json.loads(f.read()))
 
     def _load_remote_file_info(self, host, file_name):
 
-        cass_file = file_util.CassandraFile.from_file_path(file_name, meta={}, 
+        cass_file = cassandra.CassandraFile.from_file_path(file_name, meta={}, 
             host=host)
 
         meta_path = os.path.join(*(
