@@ -43,37 +43,40 @@ def _from_safe_datetime_fmt(dt_str):
 # ============================================================================
 # Version / Feature detection
 
-_version = (1,1,0)
+# _version = (1,1,0)
 
-def set_version(raw_version):
+# def set_version(raw_version):
 
-    global _version
-    if isinstance(raw_version, basestring):
-        tokens = raw_version.split(".")
-    else:
-        tokens = raw_version[:3]
+#     global _version
+#     if isinstance(raw_version, basestring):
+#         tokens = raw_version.split(".")
+#     else:
+#         tokens = raw_version[:3]
     
-    if not len(tokens) == 3:
-        raise ValueError("Not enough tokens in version %(raw_version)s" %\
-            vars())
-    try:
-        _version = tuple(
-            int(i)
-            for i in tokens
-        )
-    except (ValueError) as e:
-        raise ValueError("Non integer part in version %(raw_version)s" %\
-            vars())
-    log.info("Cassandra version set to %(_version)s" % vars())
-    return
+#     if not len(tokens) == 3:
+#         raise ValueError("Not enough tokens in version %(raw_version)s" %\
+#             vars())
+#     try:
+#         _version = tuple(
+#             int(i)
+#             for i in tokens
+#         )
+#     except (ValueError) as e:
+#         raise ValueError("Non integer part in version %(raw_version)s" %\
+#             vars())
+#     log.info("Cassandra version set to %(_version)s" % vars())
+#     return
 
-def get_version():
-    global _version
-    return _version
+# def get_version():
+#     global _version
+#     return _version
 
-def ver_has_per_cf_directory():
-    global _version
-    return _version >= (1,1,0)
+# def ver_has_per_cf_directory():
+#     global _version
+#     return _version >= (1,1,0)
+
+def ver_has_per_cf_directory(vers):
+    return vers >= (1,1,0)
 
 def is_snapshot_path(file_path):
 
@@ -103,7 +106,7 @@ class Descriptor(object):
         self.keyspace = keyspace
         self.cf_name = cf_name
         self.major_version = version[0]
-        self.minor_version = version[1] if len(version) > 1 else None
+        self.minor_version = version[1] if len(version) > 1 else ""
         self.generation = generation 
         self.temporary = temporary
 
@@ -150,6 +153,62 @@ class Descriptor(object):
 
         return (component, Descriptor(keyspace, cf_name, version, generation, 
             temporary))
+    @property
+    def cass_version(self):
+        """Returns the Cassandra version that created the current file by 
+        inspecting the major and minor file version. 
+
+        Cassandra version is returned as a three part integer tuple 
+        (major, minor, rev).
+
+        See o.a.c.io.sstable.Descriptor in the Cassandra code for up to date 
+        info on the versions.
+
+        At the time of writing::
+
+            public static final String LEGACY_VERSION = "a"; // "pre-history"
+            // b (0.7.0): added version to sstable filenames
+            // c (0.7.0): bloom filter component computes hashes over raw key bytes instead of strings
+            // d (0.7.0): row size in data component becomes a long instead of int
+            // e (0.7.0): stores undecorated keys in data and index components
+            // f (0.7.0): switched bloom filter implementations in data component
+            // g (0.8): tracks flushed-at context in metadata component
+            // h (1.0): tracks max client timestamp in metadata component
+            // hb (1.0.3): records compression ration in metadata component
+            // hc (1.0.4): records partitioner in metadata component
+            // hd (1.0.10): includes row tombstones in maxtimestamp
+            // he (1.1.3): includes ancestors generation in metadata component
+            // hf (1.1.6): marker that replay position corresponds to 1.1.5+ millis-based id (see CASSANDRA-4782)
+        """
+
+        if self.major_version == "a":
+            assert not self.minor_version
+            return (0,6,0)
+
+        if self.major_version >= "b" and self.major_version <= "f":
+            assert not self.minor_version
+            return (0,7,0)
+
+        if self.major_version == "g":
+            assert not self.minor_version
+            return (0,8,0)
+
+        if self.major_version == "h":
+            if not self.minor_version:
+                return (1,0,0)
+            elif self.minor_version == "b":
+                return (1,0,3)
+            elif self.minor_version == "c":
+                return (1,0,4)
+            elif self.minor_version == "d":
+                return (1,0,10)
+            elif self.minor_version == "e":
+                return (1,1,3)
+            elif self.minor_version == "f":
+                return (1,1,6)
+        raise ValueError("Unknown file format "\
+            "%(major_version)s%s(minor_version)s" % vars())
+
 
 # ============================================================================
 #
@@ -159,17 +218,15 @@ class CassandraFile(object):
     """
 
 
-    def __init__(self, file_path, descriptor, component, host, meta):
-
-        self.file_path = file_path
+    def __init__(self, descriptor, component, host, meta, original_path):
         self.descriptor = descriptor
         self.component = component
         self.host = host
         self.meta = meta
-
+        self.original_path = original_path
 
     def __str__(self):
-        return self.file_path
+        return self.file_name
 
     @classmethod
     def from_file_path(cls, file_path, host=None, meta=None):
@@ -179,21 +236,66 @@ class CassandraFile(object):
             meta = file_util.file_meta(file_path)
         if host is None:
             host = socket.getfqdn()
-        return CassandraFile(file_path, descriptor, component, host, meta)
+        original_path = file_path if os.path.isfile(file_path) else None
+
+        return CassandraFile(descriptor, component, host, meta, original_path)
+
+    @property
+    def file_name(self):
+        return "%s-%s-%s%s-%s-%s" % (self.descriptor.keyspace, 
+            self.descriptor.cf_name, 
+            self.descriptor.major_version, 
+            self.descriptor.minor_version, 
+            self.descriptor.generation, 
+            self.component
+        )
 
     @property
     def backup_path(self):
         """Gets the relative path to backup this file to. 
         """
 
-        _, file_name = os.path.split(self.file_path)
         return os.path.join(*(
             "hosts",
             self.host,
             self.descriptor.keyspace,
             self.descriptor.cf_name,
-            file_name,
+            self.file_name,
         ))
+
+    @property
+    def restore_path(self):
+        """Gets the relative path to restore this file to. 
+        """
+
+        return os.path.join(*(
+            self.descriptor.keyspace,
+            self.descriptor.cf_name,
+            self.file_name,
+        ))
+
+    @property
+    def keyspace_dir(self):
+        """Returns the keyspace directory for this path. 
+
+        The object must have been created with an :attr:`orginal_path`.
+        """
+
+        assert self.original_path and os.path.isfile(self.original_path)
+
+        if ver_has_per_cf_directory(self.descriptor.cass_version):
+            # data/keyspace/cf/files.db
+            ks_dir = os.path.abspath(os.path.join(os.path.dirname(
+                self.original_path), os.path.pardir))
+        else:
+            # data/keyspace/files.db
+            ks_dir = os.path.abspath(os.path.dirname(self.original_path))
+
+        assert os.path.isdir(ks_dir)
+        return ks_dir
+
+
+
 
 # ============================================================================
 #
@@ -201,6 +303,7 @@ class CassandraFile(object):
 class KeyspaceManifest(object):
     """A list of the CF files in a keyspace on a host. 
     """
+    log = logging.getLogger("%s.%s" % (__name__, "KeyspaceManifest"))
 
     def __init__(self, keyspace, host, backup_name, timestamp, 
         column_families):
@@ -212,47 +315,58 @@ class KeyspaceManifest(object):
         self.column_families = column_families
 
     @classmethod
-    def from_dir(cls, data_dir, keyspace):
+    def from_cass_file(cls, cass_file):
+        """Create a manifest of the SSTables in a keyspace. 
+
+        
+        """
 
         timestamp = datetime.datetime.now()
         safe_ts = _to_safe_datetime_fmt(timestamp)
         timestamp = timestamp.isoformat()
 
-        backup_name = "%s-%s-%s" % (safe_ts, keyspace, socket.getfqdn())
+        backup_name = "%s-%s-%s" % (safe_ts, cass_file.descriptor.keyspace, 
+            socket.getfqdn())
 
         # Get a list of the files in each CF for this KS.
         # generate a list of (cf_name, cf_file_name)
         def gen_cf_files():
-            # in cassandra 1.1 file layout is 
-            # ks/cf/sstable-component
 
-            ks_dir = os.path.join(data_dir, keyspace)
-            _, cf_dirs, _ = os.walk(ks_dir).next()
-            for cf_dir in cf_dirs:
-                _, _, cf_files = os.walk(os.path.join(ks_dir, cf_dir)).next()
+            ks_dir = cass_file.keyspace_dir
+            if ver_has_per_cf_directory(cass_file.descriptor.cass_version):
+                _, cf_dirs, _ = os.walk(ks_dir).next()
+                for cf_dir in cf_dirs:
+                    _, _, cf_files = os.walk(os.path.join(ks_dir, cf_dir
+                        )).next()
+                    for cf_file in cf_files:
+                        yield os.path.join(cf_dir, cf_file)
+            else:
+                _, _, cf_files = os.walk(ks_dir).next()
                 for cf_file in cf_files:
-                    yield(cf_dir, cf_file)
+                    yield os.path.join(ks_dir, cf_file)
 
         column_families = {}
-        for cf_name, file_name in gen_cf_files():
+        for cf_file_path in gen_cf_files():
             try:
-                _, desc = Descriptor.from_file_path(file_name)
+                _, desc = Descriptor.from_file_path(cf_file_path)
             except (ValueError):
                 # not a valid file name
                 pass
             else:
                 if not desc.temporary:
-                    column_families.setdefault(cf_name, []).append(file_name)
+                    _, file_name = os.path.split(cf_file_path)
+                    column_families.setdefault(desc.cf_name, []
+                        ).append(file_name)
 
-        return cls(keyspace, socket.getfqdn(), backup_name, timestamp, 
-            column_families)
+        return cls(cass_file.descriptor.keyspace, socket.getfqdn(), 
+            backup_name, timestamp, column_families)
 
     @classmethod
     def from_backup_name(cls, backup_name):
 
         #only get 2 splits, the host name may have "-"
         tokens = backup_name.split("-", 2)
-        
+
         safe_ts = tokens.pop(0)
         keyspace = tokens.pop(0)
         host_name = tokens.pop(0)
@@ -269,25 +383,10 @@ class KeyspaceManifest(object):
             manifest["name"], manifest["timestamp"], 
             manifest["column_families"])
 
-    # @classmethod
-    # def manifest_path(self, keyspace, backup_name):
-    #     """
-    #     """
-    #     return os.path.join(*(
-    #         "cluster",
-    #         keyspace,
-    #         "%s.json" % (backup_name,)
-    #     ))
 
     @classmethod
     def backup_dir(cls, keyspace):
         return os.path.join(*("cluster", keyspace))
-
-    # @classmethod
-    # def is_for_host(cls, manifest_file_name, host):
-
-    #     name, _ = os.path.splitext(manifest_file_name)
-    #     return name.endswith("-%s" % (host,))
 
     @property
     def backup_path(self):
@@ -316,4 +415,4 @@ class KeyspaceManifest(object):
 
         for cf_name, cf_file_names in self.column_families.iteritems():
             for file_name in cf_file_names:
-                yield (cf_name, file_name)
+                yield file_name

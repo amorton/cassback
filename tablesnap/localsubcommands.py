@@ -1,5 +1,6 @@
 """Sub Commands copy things locally
 """
+import argparse
 import copy
 import errno
 import json
@@ -60,7 +61,7 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
             self.log.info("TestMode -  store keyspace manifest to "\
                 "%(dest_manifest_path)s" % vars())
         else:
-            self._ensure_dir(dest_manifest_path)
+            file_util.ensure_dir(dest_manifest_path)
             with open(dest_manifest_path, "w") as f:
                 f.write(json.dumps(ks_manifest.to_manifest()))
         
@@ -75,24 +76,19 @@ class LocalSnapWorkerThread(subcommands.SnapWorkerThread):
             # Store the file
             dest_meta_path = "%(dest_file_path)s-meta.json" % vars()
 
-            self._ensure_dir(dest_meta_path)
+            file_util.ensure_dir(dest_meta_path)
             with open(dest_meta_path, "w") as f:
                 f.write(json.dumps(cass_file.meta))
             
             # copy the file
-            shutil.copy(cass_file.file_path, dest_file_path)
+            assert cass_file.original_path
+            shutil.copy(cass_file.original_path, dest_file_path)
         return
 
 
     def is_file_stored(self, cass_file):
         # HACK: 
         return False
-
-    def _ensure_dir(self, path):
-        if not os.path.isdir(os.path.dirname(path)):
-            os.makedirs(os.path.dirname(path))
-        return
-    
 
 # ============================================================================
 #
@@ -216,3 +212,71 @@ class LocalValidateSubCommand(subcommands.ValidateSubCommand):
         current_md5_hex, _  = file_util.file_md5(file_path)
         return current_md5_hex == backup_md5_hex
 
+# ============================================================================
+#
+
+class LocalSlurpSubCommand(subcommands.SlurpSubCommand):
+    """
+    """
+
+    log = logging.getLogger("%s.%s" % (__name__, "LocalSlurpSubCommand"))
+
+    # command description used by the base 
+    command_name = "slurp-local"
+    command_help = "Restore local backups"
+    command_description = "Restore local backups"
+
+    @classmethod
+    def add_sub_parser(cls, sub_parsers):
+        """Called to add a parser to ``sub_parsers`` for this command. 
+        """
+        
+        parser = super(LocalSlurpSubCommand, cls).add_sub_parser(sub_parsers)
+        parser.add_argument('backup_base', default=None,
+            help="Base destination path.")
+
+        return parser
+
+    def _load_manifest(self):
+
+        empty_manifest = cassandra.KeyspaceManifest.from_backup_name(
+            self.args.backup_name)
+
+        dest_manifest_path = os.path.join(self.args.backup_base, 
+            empty_manifest.backup_path)
+
+        with open(dest_manifest_path, "r") as f:
+            return cassandra.KeyspaceManifest.from_manifest(
+                json.loads(f.read()))
+
+    def _create_validation_cmd(self):
+
+        validate_args = argparse.Namespace(
+            backup_name=self.args.backup_name,
+            backup_base=self.args.backup_base,
+            checksum=self.args.checksum
+        )
+
+        return LocalValidateSubCommand(validate_args)
+
+    def _create_worker_thread(self, thread_id, work_queue, result_queue,args):
+        
+        return LocalSlurpWorkerThread(thread_id, work_queue, result_queue, 
+            args)
+
+class LocalSlurpWorkerThread(subcommands.SlurpWorkerThread):
+    log = logging.getLogger("%s.%s" % (__name__, "LocalSlurpWorkerThread"))
+
+
+    def _restore_file(self, cass_file, dest_path):
+        
+        src_path = os.path.join(self.args.backup_base, 
+            cass_file.backup_path)
+        self.log.debug("Restoring file %(cass_file)s from %(src_path)s to "\
+            "%(dest_path)s" % vars())
+
+        file_util.ensure_dir(dest_path)
+        shutil.copy(src_path, dest_path)
+        return
+
+        

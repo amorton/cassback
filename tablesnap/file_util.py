@@ -56,3 +56,13 @@ def file_meta(file_path):
     log.debug("For %(file_path)s got file meta %(file_meta)s " % vars())
     return file_meta
 
+def ensure_dir(path):
+    """Ensure the directories for ``path`` exist. 
+
+    ``path`` may be a file path or directory path. 
+    """
+
+    if not os.path.isdir(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+    return
+

@@ -9,7 +9,7 @@ S3SnapSubCommand = tablesnap.s3subcommands:S3SnapSubCommand
 LocalSnapSubCommand = tablesnap.localsubcommands:LocalSnapSubCommand
 LocalListSubCommand = tablesnap.localsubcommands:LocalListSubCommand
 LocalValidateSubCommand = tablesnap.localsubcommands:LocalValidateSubCommand
-
+LocalSlurpSubCommand = tablesnap.localsubcommands:LocalSlurpSubCommand
 """
 
 setup(

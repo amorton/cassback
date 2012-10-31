@@ -7,6 +7,7 @@ import os
 import os.path
 import Queue
 import signal
+import sys
 import threading
 import time
 
@@ -79,6 +80,34 @@ class SubCommand(object):
         """
         raise NotImplementedError()
 
+
+class SubCommandWorkerThread(threading.Thread):
+
+    def __init__(self, name,thread_id):
+        super(SubCommandWorkerThread, self).__init__()
+
+        self.name = "%(name)s-%(thread_id)s" % vars()
+        self.daemon = True
+
+        self._kill_on_error = True
+
+        assert self.log, "Must have logger"
+
+    def run(self):
+
+        try:
+            self._do_run()
+        except (Exception):
+            
+            extra = " killing process" if self._kill_on_error else ""
+            self.log.error("Unexpected error in worker thread %s%s" % (
+                self.name, extra), exc_info=True)
+
+            if self._kill_on_error:
+                # Brute force kill self
+                os.kill(os.getpid(), signal.SIGKILL)
+
+
 # ============================================================================
 # Snap - used to backup files
         
@@ -145,6 +174,7 @@ class SnapSubCommand(SubCommand):
             self._create_worker_thread(i, file_q, self.args)
             for i in range(self.args.threads)
         ]
+
         for worker in self.workers:
             worker.start()
 
@@ -152,7 +182,7 @@ class SnapSubCommand(SubCommand):
         watcher.start()
 
         self.log.info("Finished sub command %s" % self.command_name)
-        return
+        return (0, "")
 
     def _create_worker_thread(self, i, file_queue, args):
         """Called to create an endpoint to be used with a worker thread.
@@ -276,8 +306,7 @@ class WatchdogWatcher(events.FileSystemEventHandler):
                 % vars())
             return False
 
-        ks_manifest = cassandra.KeyspaceManifest.from_dir(
-            self.data_dir, cass_file.descriptor.keyspace)
+        ks_manifest = cassandra.KeyspaceManifest.from_cass_file(cass_file)
         self.log.info("Queueing file %(cass_file)s"\
             % vars())
         self.file_queue.put((ks_manifest, cass_file))
@@ -367,8 +396,6 @@ class ValidateSubCommand(SubCommand):
             action='store_true', dest='checksum', default=False,
             help="Do an MD5 checksum of the files.")
 
-        common_args.add_argument("keyspace",
-            help="Keyspace to that contains the backup.")
         common_args.add_argument('backup_name',  
             help="Backup to validate.")
 
@@ -387,7 +414,7 @@ class ValidateSubCommand(SubCommand):
         present_files = []
         corrupt_files = []
 
-        for cf_name, file_name in manifest.yield_file_names():
+        for file_name in manifest.yield_file_names():
             cass_file = self._load_remote_file_info(manifest.host, 
                 file_name)
 
@@ -452,117 +479,173 @@ class ValidateSubCommand(SubCommand):
 # ============================================================================
 # Slurp - restore a backup
 
-# class SlurpSubCommand(SubCommand):
-#     """
-#     """
+class SlurpSubCommand(SubCommand):
+    """
+    """
 
-#     @classmethod
-#     def _common_args(cls):
-#         """Returns a :class:`argparser.ArgumentParser` with the common 
-#         arguments for this Command hierarchy.
-#         """
+    @classmethod
+    def _common_args(cls):
+        """Returns a :class:`argparser.ArgumentParser` with the common 
+        arguments for this Command hierarchy.
+        """
 
-#         common_args = super(ValidateSubCommand, cls)._common_args()
+        common_args = super(SlurpSubCommand, cls)._common_args()
 
-#         common_args.add_argument("--threads", type=int, default=1,
-#             help='Number of writer threads.')
+        common_args.add_argument("--threads", type=int, default=1,
+            help='Number of writer threads.')
 
-#         common_args.add_argument("--skip-validate",
-#             action='store_true', dest='skip_validate', default=False,
-#             help="Do not validate the backup.")
+        common_args.add_argument("--skip-validate",
+            action='store_true', dest='skip_validate', default=False,
+            help="Do not validate the backup.")
 
-#         common_args.add_argument("--checksum",
-#             action='store_true', dest='checksum', default=False,
-#             help="Do a checksum when validating.")
+        common_args.add_argument("--checksum",
+            action='store_true', dest='checksum', default=False,
+            help="Do a checksum when validating.")
 
-#         common_args.add_argument("keyspace",
-#             help="Keyspace to restore.")
+        common_args.add_argument('backup_name',  
+            help="Backup to restore.")
 
-#         common_args.add_argument('backup_name',  
-#             help="Backup to restore.")
+        common_args.add_argument("cassandra_data_dir", 
+            help="Top level Cassandra data directory, normally "\
+            "/var/lib/cassandra/data.")
 
-#         return common_args
+        return common_args
 
-#     def __init__(self, args):
-#         self.args = args
+    def __init__(self, args):
+        self.args = args
 
-#     def __call__(self):
+    def __call__(self):
 
-#         self.log.info("Starting sub command %s" % self.command_name)
+        self.log.info("Starting sub command %s" % self.command_name)
 
-#         # Validate if needed.
-#         # Super class does not know the validation cmd to run.
-#         if not args.skip_validation:
-#             valid_rv, valid_out = self._create_validation_cmd()()
-#             if valid_rv != 0:
-#                 return (valid_rv, valid_out)
+        # Validate if needed.
+        # Super class does not know the validation cmd to run.
+        if not self.args.skip_validate:
+            valid_rv, valid_out = self._create_validation_cmd()()
+            if valid_rv != 0:
+                return (valid_rv, valid_out)
 
-#         manifest = self._load_manifest()
+        manifest = self._load_manifest()
 
-#         # Make a queue, we put the files that need to be restored in there.
-#         file_q = Queue.Queue()
+        # We put the files that need to be restored in there.
+        work_queue = Queue.Queue()
+        # We put the results in here
+        result_queue = Queue.Queue()
 
-#         # Fill the queue with work to be done. 
+        # Fill the queue with work to be done. 
+        file_names = []
+        import pdb
+        pdb.set_trace()
+        for file_name in manifest.yield_file_names():
+            work_queue.put(file_name)
+            file_names.append(file_name)
+        self.log.debug("Queued file for restoring: %s" % (
+            ", ".join(file_names)))
 
-#         # Make worker threads to do the work. 
-#         workers = [
-#             self._create_worker_thread(i, file_q, self.args)
-#             for i in range(self.args.threads)
-#         ]
-#         for worker in workers:
-#             worker.start()
+        # Make worker threads to do the work. 
+        workers = [
+            self._create_worker_thread(i, work_queue, result_queue, self.args)
+            for i in range(self.args.threads)
+        ]
 
-#         # Wait for the queue to empty. 
-#         file_q.join()
-#         self.log.info("Finished sub command %s" % self.command_name)
+        for worker in workers:
+            worker.start()
 
-#         buffer = []
+        # Wait for the work queue to empty. 
+        work_queue.join()
+        self.log.info("Finished sub command %s" % self.command_name)
 
-#         return (0, "\n".join(buffer))
+        buffer = ["Restored files:"]
+        from_to = []
+        while not result_queue.empty():
+            from_to.append(result_queue.get_nowait())
 
-#     class SlurpWorkerThread(threading.Thread):
-#         log = logging.getLogger("%s.%s" % (__name__, "SlurpWorkerThread"))
+        if from_to:      
+            buffer.extend(
+                "%s -> %s" % x
+                for x in from_to
+            )
+        else:
+            buffer.append("None")
+        return (0, "\n".join(buffer))
 
-#         def __init__(self, thread_id, task_queue, args):
-#             super(SlurpWorkerThread, self).__init__()
+    def _load_manifest(self):
+        """Called the load the manifest for the backup. 
+        """
+        raise NotImplementedError()
 
-#             self.name = "SlurpWorker-%(thread_id)s" % vars()
-#             self.daemon = True
+    def _create_validation_cmd(self):
+        """Called to create a command to validate the backup. """
+        raise NotImplementedError()
 
-#             self.task_queue = task_queue
-#             self.args = args
+    def _create_worker_thread(self, thread_id, work_queue, result_queue,args):
+        """Called to create a worker thread to restore files."""
+        raise NotImplementedError()
 
-#         def run(self):
-#             """
-#             """
+class SlurpWorkerThread(SubCommandWorkerThread):
+    log = logging.getLogger("%s.%s" % (__name__, "SlurpWorkerThread"))
 
-#             def safe_get():
-#                 try:
-#                     return self.task_queue.get_no_wait(False)
-#                 except (Queue.Empty):
-#                     return None
+    def __init__(self, thread_id, work_queue, result_queue, args):
+        super(SlurpWorkerThread, self).__init__("SlurpWorker", thread_id)
 
-#             task = safe_get()
-#             while task is not None:
+        self.work_queue = work_queue
+        self.result_queue = result_queue
+        self.args = args
 
-#                 file_name = task
-#                 self.log.info("Restoring file %(file_name)s" % vars())
-#                 try:
-#                     self._restore_file(file_name)
-#                 except (Exception):
-#                     self.log.critical("Failed restore %s. Aborting." %
-#                         (file_name,), exc_info=True)
-#                     # Brute force kill self
-#                     os.kill(os.getpid(), signal.SIGKILL)
-#                 else:
-#                     self.log.info("Restored file %(file_name)s" % vars())
+    def _do_run(self):
+        """
+        """
 
-#                 self.task_queue.task_done()
-#                 task = safe_get()
-#             return
-
-#         def _restore_file(self, file_name):
+        def safe_get():
+            try:
+                return self.work_queue.get_nowait()
+            except (Queue.Empty):
+                return None
 
 
+        file_name = safe_get()
+        while file_name is not None:
+
+            # Locate the file and work out where we are going to restore it 
+            cass_file = cassandra.CassandraFile.from_file_path(file_name,
+                meta={})
+            dest_path = os.path.join(self.args.cassandra_data_dir, 
+                cass_file.restore_path)
+            self.log.info("Restoring file %(cass_file)s to %(dest_path)s" % \
+                vars())
+
+            # Restore the file if we want to
+            should_restore, reason = self._should_restore(cass_file, 
+                dest_path)
+            if should_restore:
+                self._restore_file(cass_file, dest_path)
+                self.log.info("Restored file %(cass_file)s to %(dest_path)s"\
+                     % vars())
+                self.result_queue.put((file_name, dest_path))
+            else:
+                self.log.info("Skipping file %(cass_file)s because "\
+                    "%(reason)s" % vars())
+                self.result_queue.put((file_name, 
+                    "Skipped %(reason)s" % vars()))
+
+            self.work_queue.task_done()
+            file_name = safe_get()
+        return
+
+    def _restore_file(self, cass_file, dest_file):
+        raise NotImplementedError()
+
+    def _should_restore(self, cass_file, dest_path):
+        """Called to test if the ``cass_file`` should be restored to 
+        ``dest_path``.
+
+        Returns a tuple of ``(should_restore, reason)`` where ``reason`` 
+        is a string description to say why not, .e.g "Existing file"
+        """
+
+        if os.path.isfile(dest_path):
+            return (False, "Existing file")
+
+        return (True, None)
 
 
