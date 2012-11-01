@@ -279,4 +279,146 @@ class LocalSlurpWorkerThread(subcommands.SlurpWorkerThread):
         shutil.copy(src_path, dest_path)
         return
 
+
+# ============================================================================
+#
+
+class LocalPurgeSubCommand(subcommands.PurgeSubCommand):
+    """
+    """
+
+    log = logging.getLogger("%s.%s" % (__name__, "LocalPurgeSubCommand"))
+
+    # command description used by the base 
+    command_name = "purge-local"
+    command_help = "Purge local backups"
+    command_description = "Purge local backups"
+
+    @classmethod
+    def add_sub_parser(cls, sub_parsers):
+        """Called to add a parser to ``sub_parsers`` for this command. 
+        """
         
+        parser = super(LocalPurgeSubCommand, cls).add_sub_parser(sub_parsers)
+        parser.add_argument('backup_base', default=None,
+            help="Base destination path.")
+
+        return parser
+
+
+    def _all_manifests(self, keyspace, host, all_hosts):
+        """Called to load all the manifests for the ``keyspace`` and host(s)
+        combinations. 
+        """
+        
+        # Step 1 - get the keyspace dirs
+        # if keyspace arg is empty then get all. 
+        if keyspace:
+            keyspace_dirs = [
+                os.path.join(self.args.backup_base, "cluster", keyspace)
+            ]
+        else:
+            keyspace_dirs = file_util.list_dirs(os.path.join(
+                self.args.backup_base, "cluster"))
+
+        # Step 2 - Load the manifests
+        manifests = []
+        for manifest_path in file_util.list_files(keyspace_dirs):
+            # Just load the manifest and check the host
+            # could be better. 
+            self.log.debug("Opening manifest file %(manifest_path)s" \
+                % vars())
+            with open(manifest_path, "r") as f:
+                data = json.loads(f.read())
+            manifest = cassandra.KeyspaceManifest.from_manifest(data)
+
+            if all_hosts or manifest.host == host:
+                manifests.append(manifest)
+
+        return manifests
+
+
+    def _purge_manifests(self, purged_manifests):
+        """Called to delete the manifest files for ``purged_manifests``.
+        """
+        
+        deleted = []
+        for manifest in purged_manifests:
+            path = os.path.join(self.args.backup_base, manifest.backup_path)
+
+            self.log.debug("Purging manifest file %(path)s" % vars())
+            os.remove(path)
+            file_util.maybe_remove_dirs(os.path.dirname(path))
+            deleted.append(path)
+        return deleted
+
+
+    def _purge_files(self, keyspace, host, all_hosts, kept_files):
+        """Called to delete the files for the ``keyspace`` and hosts 
+        combinations that are not listed in ``kept_files``. 
+        """
+        
+        # Step 1 - top level host directories in the backup
+        if all_hosts:
+            host_dirs = file_util.list_dirs(os.path.join(
+                self.args.backup_base, "hosts"))
+        else:
+            host_dirs = [os.path.join(self.args.backup_base, "hosts", host)]
+
+
+        # Step 2 - keyspace directories
+        # if empty read all
+        if keyspace:
+            keyspace_dirs = [
+                os.path.join(dir, keyspace)
+                for dir in host_dirs
+            ]
+        else:
+            keyspace_dirs = []
+            keyspace_dirs.extend(file_util.list_dirs(host_dirs))
+
+        # Step 3 - delete things. 
+        def yield_paths():
+            # TODO: check the version !
+            for keyspace_dir in keyspace_dirs:
+                # First level is the CF name
+                for cf_dir in file_util.list_dirs(keyspace_dir):
+                    for file_path in file_util.list_files(cf_dir):
+                        yield file_path
+
+        deleted_files = []
+        for file_path in yield_paths():
+            _, file_name = os.path.split(file_path)
+
+            # storing file meta in a json file on disk is implementation 
+            # detail for the *-local sub commands.
+            if file_name.endswith("-meta.json"):
+                # keep if the sstable file is being kept. 
+                keep_file = file_name.rstrip("-meta.json") in kept_files
+            else:
+                keep_file = file_name in kept_files
+
+            if keep_file:
+                self.log.debug("Keeping file %(file_path)s" % vars())
+            else:
+                self.log.debug("Deleting file %(file_path)s" % vars())
+                os.remove(file_path)
+                deleted_files.append(file_path)
+                file_util.maybe_remove_dirs(os.path.dirname(file_path))
+
+        return deleted_files
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

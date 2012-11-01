@@ -6,6 +6,7 @@ import logging
 import os
 import os.path
 import Queue
+import socket
 import signal
 import sys
 import threading
@@ -13,7 +14,7 @@ import time
 
 from watchdog import events, observers
 
-import cassandra, file_util
+import cassandra, dt_util, file_util
 
 # ============================================================================
 # 
@@ -647,5 +648,116 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             return (False, "Existing file")
 
         return (True, None)
+
+# ============================================================================
+# Purge - remove files from the backup
+
+class PurgeSubCommand(SubCommand):
+    """
+    """
+
+    @classmethod
+    def _common_args(cls):
+        """Returns a :class:`argparser.ArgumentParser` with the common 
+        arguments for this Command hierarchy.
+        """
+
+        common_args = super(PurgeSubCommand, cls)._common_args()
+
+        common_args.add_argument("--keyspace",
+            help="Keyspace to purge from, if not specific all keyspaces "\
+            "are purged.")
+
+        common_args.add_argument("--host",  
+            help="Host to purge backups from, defaults to this host.")
+        
+        common_args.add_argument('--all-hosts',
+            dest="all_hosts", default=False, action="store_true",
+            help="Flags to purge backups for all hosts.")
+
+        common_args.add_argument("--purge-before",
+            dest='purge_before',
+            help="Purge backups older than this date time.")
+
+        return common_args
+
+    def __init__(self, args):
+        self.args = args
+
+    def __call__(self):
+
+        keyspace = self.args.keyspace
+        host = self.args.host or socket.getfqdn()
+        all_hosts = self.args.all_hosts
+        purge_before = dt_util.parse_date_input(self.args.purge_before)
+
+        # Step 1- get all the manifests
+        all_manifests = self._all_manifests(keyspace, host, all_hosts)
+        self.log.debug("Initial backup count: %s" % (len(all_manifests)))
+        
+        # Step 2 - work out which manifests are staying and which are being 
+        # purged
+        kept_manifests = []
+        purged_manifests = []
+
+        for manifest in all_manifests:
+            if manifest.timestamp < purge_before:
+                purged_manifests.append(manifest)
+            else:
+                kept_manifests.append(manifest)
+        self.log.info("Will purge %s backups and keep %s" % (
+            len(purged_manifests), len(kept_manifests)))
+
+        # Step 3 - build a set of the files we want to keep. 
+        # We do this even if there are no purged manifests. A we could be 
+        # cleaning up after a failed purge.
+        kept_files = set()
+        for manifest in kept_manifests:
+            kept_files.update(manifest.yield_file_names())
+        self.log.info("Keeping %s files." % (len(kept_files)))
+
+        # Step 4 - Purge the manifests
+        deleted_files = self._purge_manifests(purged_manifests)
+
+        # Step 5 - Purge the non kept files. 
+        deleted_files.extend(self._purge_files(keyspace, host, all_hosts, 
+            kept_files))
+
+        buffer = ["Deleted files:", ""]
+        if deleted_files:
+            buffer.extend(deleted_files)
+        else:
+            buffer.append("No files")
+
+        return (0, "\n".join(buffer))
+
+    def _all_manifests(self, keyspace, host, all_hosts):
+        """Called to load all the manifests for the ``keyspace`` and host(s)
+        combinations. 
+
+        Implementation must return an iterable of 
+        :class:`cassandra.KeyspaceManifest`
+        """
+        raise NotImplementedError()
+
+
+    def _purge_manifests(self, purged_manifests):
+        """Called to delete the manifest files for ``purged_manifests``.
+        
+        Implementation must return a list of the fully qualified paths or 
+        urls that were deleted. 
+        """
+        raise NotImplementedError()
+
+    def _purge_files(self, keyspace, host, all_hosts, kept_files):
+        """Called to delete the files for the ``keyspace`` and hosts 
+        combinations that are not listed in ``kept_files``. 
+
+        Implementation must return a list of the fully qualified paths or 
+        urls that were deleted. 
+        """
+        raise NotImplementedError()
+
+
 
 

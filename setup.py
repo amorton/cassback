@@ -10,6 +10,7 @@ LocalSnapSubCommand = tablesnap.localsubcommands:LocalSnapSubCommand
 LocalListSubCommand = tablesnap.localsubcommands:LocalListSubCommand
 LocalValidateSubCommand = tablesnap.localsubcommands:LocalValidateSubCommand
 LocalSlurpSubCommand = tablesnap.localsubcommands:LocalSlurpSubCommand
+LocalPurgeSubCommand = tablesnap.localsubcommands:LocalPurgeSubCommand
 """
 
 setup(

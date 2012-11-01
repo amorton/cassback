@@ -9,7 +9,7 @@ import pwd
 import re
 import socket
 
-import file_util
+import dt_util, file_util
 
 DATA_COMPONENT = "Data.db"
 PRIMARY_INDEX_COMPONENT = "Index.db"
@@ -323,7 +323,6 @@ class KeyspaceManifest(object):
 
         timestamp = datetime.datetime.now()
         safe_ts = _to_safe_datetime_fmt(timestamp)
-        timestamp = timestamp.isoformat()
 
         backup_name = "%s-%s-%s" % (safe_ts, cass_file.descriptor.keyspace, 
             socket.getfqdn())
@@ -380,7 +379,7 @@ class KeyspaceManifest(object):
     def from_manifest(cls, manifest):
 
         return cls(manifest["keyspace"], manifest["host"], 
-            manifest["name"], manifest["timestamp"], 
+            manifest["name"], dt_util.from_iso(manifest["timestamp"]), 
             manifest["column_families"])
 
 
@@ -402,7 +401,7 @@ class KeyspaceManifest(object):
         return {
             "host" : self.host,
             "keyspace" : self.keyspace,
-            "timestamp" : self.timestamp,
+            "timestamp" : dt_util.to_iso(self.timestamp),
             "name" : self.backup_name,
             "column_families" : self.column_families
         }
