@@ -290,6 +290,13 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             self.log.info("Ignoring non Cassandra file %(file_path)s" % \
                 vars())
             return False
+        except (EnvironmentError) as e:
+            if e.errno == errno.ENOENT:
+                self.log.info("Ignoring missing file %(file_path)s" % \
+                    vars())
+                return False
+            else:
+                raise
 
         if cass_file.descriptor.temporary:
             self.log.info("Ignoring temporary file %(cass_file)s" % vars())
