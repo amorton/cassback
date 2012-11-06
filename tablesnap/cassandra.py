@@ -207,7 +207,7 @@ class Descriptor(object):
             elif self.minor_version == "f":
                 return (1,1,6)
         raise ValueError("Unknown file format "\
-            "%(major_version)s%s(minor_version)s" % vars())
+            "%(major_version)s%(minor_version)s" % vars(self))
 
 
 # ============================================================================
