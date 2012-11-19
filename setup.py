@@ -5,12 +5,16 @@ entry_points = """
 tablesnap = tablesnap.scripts:tablesnap_main
 
 [tablesnap.sub_commands]
-S3SnapSubCommand = tablesnap.s3subcommands:S3SnapSubCommand
-LocalSnapSubCommand = tablesnap.localsubcommands:LocalSnapSubCommand
-LocalListSubCommand = tablesnap.localsubcommands:LocalListSubCommand
-LocalValidateSubCommand = tablesnap.localsubcommands:LocalValidateSubCommand
-LocalSlurpSubCommand = tablesnap.localsubcommands:LocalSlurpSubCommand
-LocalPurgeSubCommand = tablesnap.localsubcommands:LocalPurgeSubCommand
+SnapSubCommand = tablesnap.subcommands:SnapSubCommand
+ListSubCommand = tablesnap.subcommands:ListSubCommand
+ValidateSubCommand = tablesnap.subcommands:ValidateSubCommand
+SlurpSubCommand = tablesnap.subcommands:SlurpSubCommand
+PurgeSubCommand = tablesnap.subcommands:PurgeSubCommand
+
+
+[tablesnap.endpoints]
+LocalEndpoint = tablesnap.endpoints:LocalEndpoint
+
 """
 
 setup(

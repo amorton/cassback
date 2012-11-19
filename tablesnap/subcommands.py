@@ -1,6 +1,7 @@
 """Base for commands"""
 
 import argparse
+import copy
 import errno
 import logging
 import os
@@ -11,10 +12,11 @@ import signal
 import sys
 import threading
 import time
+import traceback
 
 from watchdog import events, observers
 
-import cassandra, dt_util, file_util
+import cassandra, endpoints, dt_util, file_util
 
 # ============================================================================
 # 
@@ -38,18 +40,6 @@ class SubCommand(object):
     command_description = None
     """Command line description for the Sub Command."""
 
-    @classmethod
-    def _common_args(cls):
-        """Returns a :cls:`argparser.ArgumentParser` with the common 
-        arguments for this Command hierarchy.
-
-        Common Args are used when adding a sub parser for a sub command.
-
-        Sub classes may override this method but should pass the call up 
-        to ensure the object is correctly created.
-        """
-        return argparse.ArgumentParser(add_help=False, 
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     @classmethod
     def add_sub_parser(cls, sub_parsers):
@@ -67,20 +57,53 @@ class SubCommand(object):
         assert cls.command_name, "command_name must be set."
 
         parser = sub_parsers.add_parser(cls.command_name,
-            parents=[cls._common_args()],
             help=cls.command_help or "No help", 
             description=cls.command_description or "No help", 
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
         parser.set_defaults(func=cls)
         return parser
-
+    
     def __call__(self):
         """Called to execute the SubCommand.
         
         Must be implemented by sub classes.
         """
         raise NotImplementedError()
+    
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # Utility Functions
+    
+    def _endpoint(self, args):
+        return endpoints.create_from_args(args)
+        
+    def _list_manifests(self, endpoint, keyspace, host):
+        """List all the manifests available for the ``keyspace`` and 
+        ``host``.
+        
+        Returns a list of the file names.
+        """
+        
+        manifest_dir = cassandra.KeyspaceManifest.backup_dir(keyspace) 
 
+        host_manifests = []
+        for file_name in endpoint.iter_dir(manifest_dir):
+            backup_name, _ = os.path.splitext(file_name)
+            manifest = cassandra.KeyspaceManifest.from_backup_name(
+                backup_name)
+            if manifest.host == host:
+                host_manifests.append(file_name)
+        return host_manifests
+        
+    def _load_manifest(self, endpoint, backup_name):
+        """Load the :cls:`cassandra.KeyspaceManifest` for the 
+        backup specified in the :attr:`args`
+        """
+
+        empty_manifest = cassandra.KeyspaceManifest.from_backup_name(
+            backup_name)
+
+        manifest_data = endpoint.read_json(empty_manifest.backup_path)
+        return cassandra.KeyspaceManifest.from_manifest(manifest_data)
 
 class SubCommandWorkerThread(threading.Thread):
 
@@ -99,10 +122,12 @@ class SubCommandWorkerThread(threading.Thread):
         try:
             self._do_run()
         except (Exception):
+            msg = "Unexpected error in worker thread %s%s" % (
+                self.name, " killing process" if self._kill_on_error else "")
             
-            extra = " killing process" if self._kill_on_error else ""
-            self.log.error("Unexpected error in worker thread %s%s" % (
-                self.name, extra), exc_info=True)
+            print msg
+            print traceback.format_exc()
+            self.log.critical(msg, exc_info=True)
 
             if self._kill_on_error:
                 # Brute force kill self
@@ -115,44 +140,44 @@ class SubCommandWorkerThread(threading.Thread):
 class SnapSubCommand(SubCommand):
     """Base for Sub Commands that watch and backup files. 
     """
+    log = logging.getLogger("%s.%s" % (__name__, "SnapSubCommand"))
+
+    command_name = "snap"
+    command_help = "Backup SSTables"
+    command_description = "backup SSTables"
 
     @classmethod
-    def _common_args(cls):
-        """Returns a :class:`argparser.ArgumentParser` with the common 
-        arguments for this Command hierarchy.
+    def add_sub_parser(cls, sub_parsers):
+        """
         """
 
-        common_args = super(SnapSubCommand, cls)._common_args()
+        sub_parser = super(SnapSubCommand, cls).add_sub_parser(sub_parsers)
 
-        common_args.add_argument("--threads", type=int, default=4,
+        sub_parser.add_argument("--threads", type=int, default=4,
             help='Number of writer threads.')
-        common_args.add_argument('--recursive', action='store_true', 
+        sub_parser.add_argument('--recursive', action='store_true', 
             default=False,
             help='Recursively watch the given path(s)s for new SSTables')
 
-        common_args.add_argument('--exclude-keyspace', 
+        sub_parser.add_argument('--exclude-keyspace', 
             dest='exclude_keyspaces', nargs="*",
             help="User keyspaces to exclude from backup.")
-        common_args.add_argument('--include-system-keyspace', default=False,
+        sub_parser.add_argument('--include-system-keyspace', default=False,
             dest='include_system_keyspace', action="store_true",
             help="Include the system keyspace.")
 
-        common_args.add_argument('--ignore-existing', default=False,
+        sub_parser.add_argument('--ignore-existing', default=False,
             dest='ignore_existing', action="store_true",
             help="Don't backup existing files.")
-        common_args.add_argument('--ignore-changes', default=False,
+        sub_parser.add_argument('--ignore-changes', default=False,
             dest='ignore_changes', action="store_true",
             help="Don't watch for file changes, exit immediately.")
 
-        common_args.add_argument('--test_mode', 
-            action='store_true', dest='test_mode', default=False,
-            help="Do not upload .")
+        sub_parser.add_argument("--cassandra_data_dir", 
+            default="/var/lib/cassandra/data",
+            help="Top level Cassandra data directory.")
 
-        common_args.add_argument("cassandra_data_dir", 
-            help="Top level Cassandra data directory, normally "\
-            "/var/lib/cassandra/data.")
-
-        return common_args
+        return sub_parser
 
     def __init__(self, args):
         self.args = args
@@ -172,7 +197,7 @@ class SnapSubCommand(SubCommand):
 
         # Make worker threads
         self.workers = [
-            self._create_worker_thread(i, file_q, self.args)
+            self._create_worker_thread(i, file_q)
             for i in range(self.args.threads)
         ]
 
@@ -185,12 +210,11 @@ class SnapSubCommand(SubCommand):
         self.log.info("Finished sub command %s" % self.command_name)
         return (0, "")
 
-    def _create_worker_thread(self, i, file_queue, args):
+    def _create_worker_thread(self, i, file_queue):
         """Called to create an endpoint to be used with a worker thread.
-
-        Sublcasses must implement this.
         """
-        raise NotImplementedError()
+
+        return SnapWorkerThread(i, file_queue, copy.copy(self.args))
 
 class SnapWorkerThread(threading.Thread):
     log = logging.getLogger("%s.%s" % (__name__, "SnapWorkerThread"))
@@ -208,13 +232,16 @@ class SnapWorkerThread(threading.Thread):
         """Wait to get work from the :attr:`file_q`
         """
 
+        endpoint = endpoints.create_from_args(self.args)
+
+
         while True:
-            # blocking
+            # blocking call
             ks_manifest, cass_file = self.file_q.get()
             self.log.info("Uploading file %(cass_file)s" % vars())
             try:
 
-                self._store(ks_manifest, cass_file)
+                self._run_internal(endpoint, ks_manifest, cass_file)
             except (EnvironmentError) as e:
                 # sometimes it's an IOError sometimes OSError
                 # EnvironmentError is the base
@@ -234,6 +261,23 @@ class SnapWorkerThread(threading.Thread):
 
             self.file_q.task_done()
         return
+
+    def _run_internal(self, endpoint, ks_manifest, cass_file):
+        """Backup the cassandra file and keyspace manifest. 
+
+        Let errors from here buble out. 
+        """
+
+        # Store the cassandra file
+        endpoint.store_with_meta(cass_file.original_path,
+            cass_file.meta, cass_file.backup_path)
+
+        # Store the keyspace manifest
+        endpoint.store_json(ks_manifest.to_manifest(),
+            ks_manifest.backup_path)
+
+        return
+
 
 class WatchdogWatcher(events.FileSystemEventHandler):
     """Watch the disk for new files."""
@@ -339,51 +383,69 @@ class ListSubCommand(SubCommand):
     """Base for Sub Commands that watch and backup files. 
     """
 
+    log = logging.getLogger("%s.%s" % (__name__, "ListSubCommand"))
+
+    command_name = "list"
+    command_help = "List Backups"
+    command_description = "List Backups"
+
     @classmethod
-    def _common_args(cls):
-        """Returns a :class:`argparser.ArgumentParser` with the common 
-        arguments for this Command hierarchy.
+    def add_sub_parser(cls, sub_parsers):
+        """
         """
 
-        common_args = super(ListSubCommand, cls)._common_args()
-        common_args.add_argument('--all', 
+        sub_parser = super(ListSubCommand, cls).add_sub_parser(sub_parsers)
+
+        sub_parser.add_argument('--all', 
             action='store_true', dest='list_all', default=False,
             help="List all backups that match the criteria. Otherwise only "\
             "the most recent backup is listed.")
 
-        common_args.add_argument("keyspace",
+        sub_parser.add_argument("keyspace",
             help="Keyspace to list backups from.")
-        common_args.add_argument('host',  
-            help="Host to list backups from.")
+        sub_parser.add_argument('--host',
+            default=socket.getfqdn(),  
+            help="Host to list backups from. Defaults to the current host.")
 
-        return common_args
+        return sub_parser
 
     def __init__(self, args):
         self.args = args
-        
 
     def __call__(self):
 
         self.log.info("Starting sub command %s" % self.command_name)
 
         manifests = self._list_manifests()
-
-        buffer = ["All" if self.args.list_all else "Latest" + \
-            " backups for keyspace %(keyspace)s from %(host)s:" % vars(
+        buffer = [("All backups" if self.args.list_all else "Latest backup")\
+            + " for keyspace %(keyspace)s from %(host)s:" % vars(
             self.args)]
-        for f in manifests:
-            name, _ = os.path.splitext(f)
+
+        for file_name in manifests:
+            name, _ = os.path.splitext(file_name)
             buffer.append(name)
 
         self.log.info("Finished sub command %s" % self.command_name)
         return (0, "\n".join(buffer)) 
 
     def _list_manifests(self):
-        """Called to create an endpoint to be used with a worker thread.
+        
+        endpoint = endpoints.create_from_args(self.args)
+        manifest_dir = cassandra.KeyspaceManifest.backup_dir(
+            self.args.keyspace) 
 
-        Sublcasses must implement this.
-        """
-        raise NotImplementedError()
+        host_manifests = []
+        for file_name in endpoint.iter_dir(manifest_dir):
+            backup_name, _ = os.path.splitext(file_name)
+            manifest = cassandra.KeyspaceManifest.from_backup_name(
+                backup_name)
+            if manifest.host == self.args.host:
+                host_manifests.append(file_name)
+
+        if self.args.list_all:
+            return host_manifests
+        return [max(host_manifests),]
+
 
 # ============================================================================
 # Validate - validate that all files in a backup are present
@@ -392,22 +454,26 @@ class ValidateSubCommand(SubCommand):
     """Base for Sub Commands that watch and backup files. 
     """
 
+    log = logging.getLogger("%s.%s" % (__name__, "ListSubCommand"))
+
+    command_name = "validate"
+    command_help = "Validate all files exist for a backup."
+    command_description = "Validate all files exist for a backup."
+
     @classmethod
-    def _common_args(cls):
-        """Returns a :class:`argparser.ArgumentParser` with the common 
-        arguments for this Command hierarchy.
+    def add_sub_parser(cls, sub_parsers):
         """
+        """
+        sub_parser = super(ValidateSubCommand, cls).add_sub_parser(sub_parsers)
 
-        common_args = super(ValidateSubCommand, cls)._common_args()
-
-        common_args.add_argument("--checksum",
+        sub_parser.add_argument("--checksum",
             action='store_true', dest='checksum', default=False,
             help="Do an MD5 checksum of the files.")
 
-        common_args.add_argument('backup_name',  
+        sub_parser.add_argument('backup_name',  
             help="Backup to validate.")
 
-        return common_args
+        return sub_parser
 
     def __init__(self, args):
         self.args = args
@@ -416,24 +482,33 @@ class ValidateSubCommand(SubCommand):
 
         self.log.info("Starting sub command %s" % self.command_name)
 
-        manifest = self._load_manifest()
+        endpoint = endpoints.create_from_args(self.args)
+        manifest = self._load_manifest(endpoint, self.args.backup_name)
 
         missing_files = []
         present_files = []
         corrupt_files = []
 
         for file_name in manifest.yield_file_names():
-            cass_file = self._load_remote_file_info(manifest.host, 
-                file_name)
+            
+            # Model the file in the manifest.
+            cass_file = cassandra.CassandraFile.from_file_path(file_name, 
+                meta={}, host=manifest.host)
+
+            try:
+                cass_file.meta = endpoint.read_meta(cass_file.backup_path)
+            except (EnvironmentError) as e:
+                if e == errno.ENOENT:
+                    # missing file. 
+                    cass_file = None    
+                raise
 
             if cass_file is None:
-                # Could not load the remote file info, let's say the file is
-                # missing
                 missing_files.append(file_name)
-            elif self._file_exists(cass_file):
+            elif endpoint.exists(cass_file.backup_path):
                 if not self.args.checksum:
                     present_files.append(file_name)
-                elif self._checksum_file(cass_file):
+                elif endpoint.validate_checksum(cass_file):
                     present_files.append(file_name)
                 else:
                     corrupt_files.append(file_name)
@@ -473,17 +548,6 @@ class ValidateSubCommand(SubCommand):
             "\n".join(buffer)
         )
 
-    def _load_manifest(self):
-        raise NotImplementedError()
-
-    def _load_remote_file_info(self, host, file_name):
-        raise NotImplementedError()
-
-    def _file_exists(self, backup_file):
-        raise NotImplementedError()
-
-    def _checksum_file(self, backup_file):
-        raise NotImplementedError()
 # ============================================================================
 # Slurp - restore a backup
 
@@ -491,33 +555,30 @@ class SlurpSubCommand(SubCommand):
     """
     """
 
+    log = logging.getLogger("%s.%s" % (__name__, "ListSubCommand"))
+
+    command_name = "slurp"
+    command_help = "Restore backups"
+    command_description = "Restore backups"
+
     @classmethod
-    def _common_args(cls):
-        """Returns a :class:`argparser.ArgumentParser` with the common 
-        arguments for this Command hierarchy.
+    def add_sub_parser(cls, sub_parsers):
         """
+        """
+        
+        sub_parser = super(SlurpSubCommand, cls).add_sub_parser(sub_parsers)
 
-        common_args = super(SlurpSubCommand, cls)._common_args()
-
-        common_args.add_argument("--threads", type=int, default=1,
+        sub_parser.add_argument("--threads", type=int, default=1,
             help='Number of writer threads.')
 
-        common_args.add_argument("--skip-validate",
-            action='store_true', dest='skip_validate', default=False,
-            help="Do not validate the backup.")
-
-        common_args.add_argument("--checksum",
-            action='store_true', dest='checksum', default=False,
-            help="Do a checksum when validating.")
-
-        common_args.add_argument('backup_name',  
-            help="Backup to restore.")
-
-        common_args.add_argument("cassandra_data_dir", 
+        sub_parser.add_argument("cassandra_data_dir", 
             help="Top level Cassandra data directory, normally "\
             "/var/lib/cassandra/data.")
 
-        return common_args
+        sub_parser.add_argument('backup_name',  
+            help="Backup to restore.")
+
+        return sub_parser
 
     def __init__(self, args):
         self.args = args
@@ -526,33 +587,26 @@ class SlurpSubCommand(SubCommand):
 
         self.log.info("Starting sub command %s" % self.command_name)
 
-        # Validate if needed.
-        # Super class does not know the validation cmd to run.
-        if not self.args.skip_validate:
-            valid_rv, valid_out = self._create_validation_cmd()()
-            if valid_rv != 0:
-                return (valid_rv, valid_out)
-
-        manifest = self._load_manifest()
+        endpoint = endpoints.create_from_args(self.args)
+        manifest = self._load_manifest(endpoint, self.args.backup_name)
 
         # We put the files that need to be restored in there.
         work_queue = Queue.Queue()
         # We put the results in here
+        # So we can say what was copied to where.
         result_queue = Queue.Queue()
 
         # Fill the queue with work to be done. 
         file_names = []
-        import pdb
-        pdb.set_trace()
         for file_name in manifest.yield_file_names():
             work_queue.put(file_name)
             file_names.append(file_name)
-        self.log.debug("Queued file for restoring: %s" % (
+        self.log.info("Queued file for restoring: %s" % (
             ", ".join(file_names)))
 
         # Make worker threads to do the work. 
         workers = [
-            self._create_worker_thread(i, work_queue, result_queue, self.args)
+            self._create_worker_thread(i, work_queue, result_queue)
             for i in range(self.args.threads)
         ]
 
@@ -560,9 +614,11 @@ class SlurpSubCommand(SubCommand):
             worker.start()
 
         # Wait for the work queue to empty. 
+        self.log.info("Waiting on workers.")
         work_queue.join()
         self.log.info("Finished sub command %s" % self.command_name)
 
+        # Make a pretty message 
         buffer = ["Restored files:"]
         from_to = []
         while not result_queue.empty():
@@ -577,18 +633,11 @@ class SlurpSubCommand(SubCommand):
             buffer.append("None")
         return (0, "\n".join(buffer))
 
-    def _load_manifest(self):
-        """Called the load the manifest for the backup. 
+    def _create_worker_thread(self, i, work_queue, result_queue):
+        """Called to create an endpoint to be used with a worker thread.
         """
-        raise NotImplementedError()
-
-    def _create_validation_cmd(self):
-        """Called to create a command to validate the backup. """
-        raise NotImplementedError()
-
-    def _create_worker_thread(self, thread_id, work_queue, result_queue,args):
-        """Called to create a worker thread to restore files."""
-        raise NotImplementedError()
+        return SlurpWorkerThread(i, work_queue, result_queue, 
+            copy.copy(self.args))
 
 class SlurpWorkerThread(SubCommandWorkerThread):
     log = logging.getLogger("%s.%s" % (__name__, "SlurpWorkerThread"))
@@ -610,7 +659,7 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             except (Queue.Empty):
                 return None
 
-
+        endpoint = endpoints.create_from_args(self.args)
         file_name = safe_get()
         while file_name is not None:
 
@@ -626,7 +675,7 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             should_restore, reason = self._should_restore(cass_file, 
                 dest_path)
             if should_restore:
-                self._restore_file(cass_file, dest_path)
+                endpoint.restore(cass_file.backup_path, dest_path)
                 self.log.info("Restored file %(cass_file)s to %(dest_path)s"\
                      % vars())
                 self.result_queue.put((file_name, dest_path))
@@ -639,9 +688,6 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             self.work_queue.task_done()
             file_name = safe_get()
         return
-
-    def _restore_file(self, cass_file, dest_file):
-        raise NotImplementedError()
 
     def _should_restore(self, cass_file, dest_path):
         """Called to test if the ``cass_file`` should be restored to 
@@ -663,44 +709,47 @@ class PurgeSubCommand(SubCommand):
     """
     """
 
+    log = logging.getLogger("%s.%s" % (__name__, "PurgeSubCommand"))
+
+    command_name = "purge"
+    command_help = "Purge old backups"
+    command_description = "Purge old backups"
+
     @classmethod
-    def _common_args(cls):
-        """Returns a :class:`argparser.ArgumentParser` with the common 
-        arguments for this Command hierarchy.
+    def add_sub_parser(cls, sub_parsers):
         """
+        """
+        sub_parser = super(PurgeSubCommand, cls).add_sub_parser(sub_parsers)
 
-        common_args = super(PurgeSubCommand, cls)._common_args()
-
-        common_args.add_argument("--keyspace",
-            help="Keyspace to purge from, if not specific all keyspaces "\
+        sub_parser.add_argument("--keyspace", nargs="+",
+            help="Keyspace to purge from, if not specified all keyspaces "\
             "are purged.")
 
-        common_args.add_argument("--host",  
+        sub_parser.add_argument("--host",  
             help="Host to purge backups from, defaults to this host.")
-        
-        common_args.add_argument('--all-hosts',
-            dest="all_hosts", default=False, action="store_true",
-            help="Flags to purge backups for all hosts.")
 
-        common_args.add_argument("--purge-before",
+        sub_parser.add_argument("--purge-before",
             dest='purge_before',
             help="Purge backups older than this date time.")
 
-        return common_args
+        return sub_parser
 
     def __init__(self, args):
         self.args = args
 
     def __call__(self):
-
-        keyspace = self.args.keyspace
+        
+        
+        keyspaces = self.args.keyspace
         host = self.args.host or socket.getfqdn()
-        all_hosts = self.args.all_hosts
         purge_before = dt_util.parse_date_input(self.args.purge_before)
-
+        
+        endpoint = self._endpoint(self.args)
+        
         # Step 1- get all the manifests
-        all_manifests = self._all_manifests(keyspace, host, all_hosts)
-        self.log.debug("Initial backup count: %s" % (len(all_manifests)))
+        self.log.debug("Building list of manifests.")
+        all_manifests = self._all_manifests(endpoint, keyspaces, host)
+        self.log.info("Candiate manifest count: %s" % (len(all_manifests)))
         
         # Step 2 - work out which manifests are staying and which are being 
         # purged
@@ -721,13 +770,13 @@ class PurgeSubCommand(SubCommand):
         kept_files = set()
         for manifest in kept_manifests:
             kept_files.update(manifest.yield_file_names())
-        self.log.info("Keeping %s files." % (len(kept_files)))
+        self.log.info("Keeping %s sstable files." % (len(kept_files)))
 
         # Step 4 - Purge the manifests
-        deleted_files = self._purge_manifests(purged_manifests)
+        deleted_files = self._purge_manifests(endpoint, purged_manifests)
 
-        # Step 5 - Purge the non kept files. 
-        deleted_files.extend(self._purge_files(keyspace, host, all_hosts, 
+        # Step 5 - Purge the files that are not referenced from a manifest.
+        deleted_files.extend(self._purge_sstables(endpoint, keyspaces, host, 
             kept_files))
 
         buffer = ["Deleted files:", ""]
@@ -738,33 +787,90 @@ class PurgeSubCommand(SubCommand):
 
         return (0, "\n".join(buffer))
 
-    def _all_manifests(self, keyspace, host, all_hosts):
-        """Called to load all the manifests for the ``keyspace`` and host(s)
-        combinations. 
-
-        Implementation must return an iterable of 
-        :class:`cassandra.KeyspaceManifest`
+    def _all_manifests(self, endpoint, keyspaces, host):
+        """Loads all manifests for the ``keyspaces`` and ``host``.
         """
-        raise NotImplementedError()
-
-
-    def _purge_manifests(self, purged_manifests):
-        """Called to delete the manifest files for ``purged_manifests``.
         
-        Implementation must return a list of the fully qualified paths or 
-        urls that were deleted. 
+        # Step 1 - get the keyspace dirs
+        # if keyspace arg is empty then get all. 
+        if keyspaces:
+            ks_dirs = [
+                os.path.join("cluster", ks_name)
+                for ks_name in keyspaces
+            ]
+        else:
+            ks_dirs = list(
+                os.path.join("cluster", d)
+                for d in endpoint.iter_dir("cluster", include_files=False, 
+                    include_dirs=True)
+            )
+            
+        # Step 2 - Load the manifests
+        manifests = []
+        for ks_dir in ks_dirs:
+            for manifest_file_name in endpoint.iter_dir(ks_dir):
+                # Just load the manifest and check the host
+                # could be better. 
+                self.log.debug("Opening manifest file %(manifest_file_name)s"\
+                    % vars())
+
+                manifest = cassandra.KeyspaceManifest.from_manifest(
+                    endpoint.read_json(os.path.join(ks_dir, 
+                    manifest_file_name)))
+
+                if manifest.host == host:
+                    manifests.append(manifest)
+        return manifests
+
+    def _purge_manifests(self, endpoint,  purged_manifests):
+        """Deletes the :cls:`cassandra.KeyspaceManifest` manifests 
+        in ``purged_manifests``.
+        
+        Returns a list of the paths deleted. 
         """
-        raise NotImplementedError()
+        
+        deleted = []
+        for manifest in purged_manifests:
+            path = manifest.backup_path
+            self.log.info("Purging manifest file %(path)s" % vars())
+            deleted.append(endpoint.remove_file(path))
+        return deleted
 
-    def _purge_files(self, keyspace, host, all_hosts, kept_files):
-        """Called to delete the files for the ``keyspace`` and hosts 
-        combinations that are not listed in ``kept_files``. 
-
-        Implementation must return a list of the fully qualified paths or 
-        urls that were deleted. 
+    def _purge_sstables(self, endpoint, keyspaces, host, kept_files):
+        """Deletes the sstables for in the ``keyspaces`` for the ``host``
+        that are not listed in ``kept_files``. 
+        
+        If ``keyspaces`` is empty purge from all keyspaces.
+        
+        Returns a list of the paths deleted.
         """
-        raise NotImplementedError()
+        
+        # Step 1 - work out the keyspace directores we want to delete from.
+        if keyspaces:
+            ks_dirs = [
+                os.path.join("hosts", host, ks_name)
+                for ks_name in keyspaces
+            ]
+        else:
+            host_dir = os.path.join("hosts", host)
+            ks_dirs = list(
+                os.path.join(host_dir, d)
+                for d in endpoint.iter_dir(host_dir, include_files=False, 
+                    include_dirs=True)
+            )
 
+        # Step 3 - delete files not in the keep list.
+        deleted_files = []
+        for ks_dir in ks_dirs:
+            for file_path in endpoint.iter_dir(ks_dir, recursive=True):
+                _, file_name = os.path.split(file_path)
 
+                if file_name in kept_files:
+                    self.log.debug("Keeping file %(file_path)s" % vars())
+                else:
+                    self.log.debug("Deleting file %(file_path)s" % vars())
+                    deleted_files.append(endpoint.remove_file_with_meta(
+                        file_path))
 
+        return deleted_files
 

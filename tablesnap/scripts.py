@@ -2,13 +2,11 @@
 
 import argparse
 import logging
+import os.path
 import sys
 import traceback
 
 import pkg_resources
-
-logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
-_log = logging.getLogger(__name__)
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Sub Commands take the command line args and call the function to do the 
@@ -67,6 +65,28 @@ def arg_parser():
         # Load the class and add it's parser
         entry_point.load().add_sub_parser(sub_parsers)
 
+    endpoint_names = []
+    # Add all of the endpoints
+    for entry_point in pkg_resources.iter_entry_points("tablesnap.endpoints"):
+        
+        # Load the class and add it's parser
+        endpoint_class = entry_point.load()
+        endpoint_class.add_arg_group(main_parser)
+        endpoint_names.append(endpoint_class.name)
+
+    # Global Configuration
+    main_parser.add_argument("--endpoint", default="local", 
+        choices=endpoint_names, 
+        help="Name of the endpoint to use for backup and restore.")
+
+    main_parser.add_argument("--log-level", default="DEBUG", 
+        dest="log_level", 
+        choices=["FATAL", "CRITICAL", "ERROR", "WARN", "INFO", "DEBUG"],
+        help="Logging level.")
+    main_parser.add_argument("--log-file", default="./tablesnap.log", 
+        dest="log_file", 
+        help="Logging file.")
+
     return main_parser
 
 def tablesnap_main():
@@ -74,8 +94,12 @@ def tablesnap_main():
     """
     
     args = arg_parser().parse_args()
-    
-    _log.debug("Got command args %(args)s" % vars())
+
+    logging.basicConfig(filename=os.path.abspath(args.log_file), 
+        level=getattr(logging, args.log_level))
+
+    log = logging.getLogger(__name__)
+    log.debug("Got command args %(args)s" % vars())
     try:
         # parsing the args works out which function we want to call.
         sub_command = args.func(args)
