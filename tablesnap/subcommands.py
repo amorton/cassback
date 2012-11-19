@@ -874,3 +874,50 @@ class PurgeSubCommand(SubCommand):
 
         return deleted_files
 
+# ============================================================================
+# Show - show the contents of a backup
+
+class ShowSubCommand(SubCommand):
+    """
+    """
+
+    log = logging.getLogger("%s.%s" % (__name__, "ShowSubCommand"))
+
+    command_name = "show"
+    command_help = "Show the contents of a backup."
+    command_description = "Show the contents of a backup."
+
+    @classmethod
+    def add_sub_parser(cls, sub_parsers):
+        """
+        """
+        sub_parser = super(ShowSubCommand, cls).add_sub_parser(sub_parsers)
+
+        sub_parser.add_argument("backup_name",
+            help="Purge backups older than this date time.")
+
+        return sub_parser
+
+    def __init__(self, args):
+        self.args = args
+
+    def __call__(self):
+
+        endpoint = self._endpoint(self.args)
+        manifest = self._load_manifest(endpoint, self.args.backup_name)
+
+        str_builder = ["Backup: %s" % manifest.backup_name]
+        
+        str_builder.append("")
+        str_builder.append("Keyspace: %s:" % (manifest.keyspace,))
+        str_builder.append("Host: %s:" % (manifest.host,))
+        str_builder.append("Timestamp: %s:" % (manifest.timestamp,))
+        
+        for cf_name, cf_files in manifest.column_families.iteritems():
+            str_builder.append("")
+            str_builder.append("Column Family: %s" % (cf_name,))
+            for cf_file in cf_files:
+                str_builder.append("\t%s" % (cf_file,))
+        
+        return (0, "\n".join(str_builder))
+        

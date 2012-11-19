@@ -10,6 +10,7 @@ ListSubCommand = tablesnap.subcommands:ListSubCommand
 ValidateSubCommand = tablesnap.subcommands:ValidateSubCommand
 SlurpSubCommand = tablesnap.subcommands:SlurpSubCommand
 PurgeSubCommand = tablesnap.subcommands:PurgeSubCommand
+ShowSubCommand = tablesnap.subcommands:ShowSubCommand
 
 
 [tablesnap.endpoints]
