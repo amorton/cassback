@@ -66,6 +66,9 @@ class SubCommand(object):
     def __call__(self):
         """Called to execute the SubCommand.
         
+        Must return a tuple of (rv, msg). Rv is returned as the script exit 
+        and msg is the std out message.
+        
         Must be implemented by sub classes.
         """
         raise NotImplementedError()
@@ -74,11 +77,12 @@ class SubCommand(object):
     # Utility Functions
     
     def _endpoint(self, args):
+        """Creates an endpoint from the command args."""
         return endpoints.create_from_args(args)
         
     def _list_manifests(self, endpoint, keyspace, host):
         """List all the manifests available for the ``keyspace`` and 
-        ``host``.
+        ``host`` using the ``endpoint``.
         
         Returns a list of the file names.
         """
@@ -96,56 +100,83 @@ class SubCommand(object):
         
     def _load_manifest(self, endpoint, backup_name):
         """Load the :cls:`cassandra.KeyspaceManifest` for the 
-        backup specified in the :attr:`args`
+        backup with ``backup_name`` using the ``endpoint``.
         """
 
         empty_manifest = cassandra.KeyspaceManifest.from_backup_name(
             backup_name)
-
         manifest_data = endpoint.read_json(empty_manifest.backup_path)
         return cassandra.KeyspaceManifest.from_manifest(manifest_data)
 
 class SubCommandWorkerThread(threading.Thread):
-
-    def __init__(self, name,thread_id):
+    """Base for threads used by sub commands.
+    
+    Provides a top level exception handler for the thread that kills the 
+    process if :attr:`kill_on_error` is set. 
+    
+    Sub classes should implement :func:`_do_run` rather than :func:`run`.
+    """
+    
+    def __init__(self, name, thread_id):
         super(SubCommandWorkerThread, self).__init__()
 
         self.name = "%(name)s-%(thread_id)s" % vars()
         self.daemon = True
 
-        self._kill_on_error = True
-
+        self.kill_on_error = True
         assert self.log, "Must have logger"
-
+    
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # Thread overrides.
+    
     def run(self):
 
         try:
             self._do_run()
         except (Exception):
             msg = "Unexpected error in worker thread %s%s" % (
-                self.name, " killing process" if self._kill_on_error else "")
-            
+                self.name, " killing process" if self.kill_on_error else "")
+
             print msg
             print traceback.format_exc()
             self.log.critical(msg, exc_info=True)
 
-            if self._kill_on_error:
+            if self.kill_on_error:
                 # Brute force kill self
                 os.kill(os.getpid(), signal.SIGKILL)
+    
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # Abstract Methods
+    
+    def _do_run():
+        """Called by :func:`run` to start the thread. 
+        """
+        pass
 
-
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # utility Methods
+    
+    def _endpoint(self, args):
+        """Creates an endpoint from the command args."""
+        return endpoints.create_from_args(args)
+        
 # ============================================================================
 # Snap - used to backup files
         
 class SnapSubCommand(SubCommand):
-    """Base for Sub Commands that watch and backup files. 
-    """
     log = logging.getLogger("%s.%s" % (__name__, "SnapSubCommand"))
 
     command_name = "snap"
     command_help = "Backup SSTables"
     command_description = "backup SSTables"
 
+    def __init__(self, args):
+        self.args = args
+        return
+
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # Subcommand Overrides
+    
     @classmethod
     def add_sub_parser(cls, sub_parsers):
         """
@@ -179,14 +210,9 @@ class SnapSubCommand(SubCommand):
 
         return sub_parser
 
-    def __init__(self, args):
-        self.args = args
-        return
-
     def __call__(self):
-
         self.log.info("Starting sub command %s" % self.command_name)
-
+        
         # Make a queue, we put the files that need to be backed up here.
         file_q = Queue.Queue()
 
@@ -200,7 +226,6 @@ class SnapSubCommand(SubCommand):
             self._create_worker_thread(i, file_q)
             for i in range(self.args.threads)
         ]
-
         for worker in self.workers:
             worker.start()
 
@@ -208,57 +233,43 @@ class SnapSubCommand(SubCommand):
         watcher.start()
 
         self.log.info("Finished sub command %s" % self.command_name)
+        
+        # There is no message to call. Assume the process has been running 
+        # for a while.
         return (0, "")
 
     def _create_worker_thread(self, i, file_queue):
-        """Called to create an endpoint to be used with a worker thread.
+        """Creates a worker thread for the snap command
         """
-
         return SnapWorkerThread(i, file_queue, copy.copy(self.args))
 
-class SnapWorkerThread(threading.Thread):
+class SnapWorkerThread(SubCommandWorkerThread):
     log = logging.getLogger("%s.%s" % (__name__, "SnapWorkerThread"))
 
     def __init__(self, thread_id, file_q, args):
-        super(SnapWorkerThread, self).__init__()
-
-        self.name = "SnapWorker-%(thread_id)s" % vars()
-        self.daemon = True
+        super(SnapWorkerThread, self).__init__("SnapWorker-", thread_id)
 
         self.file_q = file_q
         self.args = args
 
-    def run(self):
+    def _do_run(self):
         """Wait to get work from the :attr:`file_q`
         """
 
-        endpoint = endpoints.create_from_args(self.args)
-
-
+        endpoint = self._endpoint(self.args)
         while True:
             # blocking call
             ks_manifest, cass_file = self.file_q.get()
-            self.log.info("Uploading file %(cass_file)s" % vars())
             try:
-
                 self._run_internal(endpoint, ks_manifest, cass_file)
             except (EnvironmentError) as e:
                 # sometimes it's an IOError sometimes OSError
                 # EnvironmentError is the base
                 if not(e.errno == errno.ENOENT and \
-                    e.filename==cass_file.file_path):
+                    e.filename==cass_file.original_path):
                     raise
                 self.log.info("Aborted uploading %(cass_file)s was removed" %\
                     vars())
-
-            except (Exception):
-                self.log.critical("Failed uploading %s. Aborting." %
-                    (cass_file,), exc_info=True)
-                # Brute force kill self
-                os.kill(os.getpid(), signal.SIGKILL)
-            else:
-                self.log.info("Uploaded file %(cass_file)s" % vars())
-
             self.file_q.task_done()
         return
 
@@ -266,18 +277,33 @@ class SnapWorkerThread(threading.Thread):
         """Backup the cassandra file and keyspace manifest. 
 
         Let errors from here buble out. 
+        
+        Returns `True` if the file was uploaded, `False` otherwise.
         """
 
+        self.log.info("Uploading file %s" % (cass_file.original_path,))
+            
         # Store the cassandra file
-        endpoint.store_with_meta(cass_file.original_path,
-            cass_file.meta, cass_file.backup_path)
+        if endpoint.exists(cass_file.backup_path):
+            if endpoint.validate_checksum(cass_file.backup_path, 
+                cass_file.meta["md5_hex"]):
+                
+                self.log.info("Skipping file %s skipping as there is a "\
+                    "valid backup"% (cass_file.original_path,))
+            else:
+                self.log.warn("Possibly corrupt file %s in the backup at %s"\
+                    " skipping." % (cass_file.original_path, full_path))
+            return False
 
-        # Store the keyspace manifest
+        uploaded_path = endpoint.store_with_meta(cass_file.original_path,
+            cass_file.meta, cass_file.backup_path)
         endpoint.store_json(ks_manifest.to_manifest(),
             ks_manifest.backup_path)
-
-        return
-
+        
+        self.log.info("Uploaded file %s to %s" % (cass_file.original_path, 
+            uploaded_path))
+        return True
+        
 
 class WatchdogWatcher(events.FileSystemEventHandler):
     """Watch the disk for new files."""
@@ -343,7 +369,7 @@ class WatchdogWatcher(events.FileSystemEventHandler):
                 raise
 
         if cass_file.descriptor.temporary:
-            self.log.info("Ignoring temporary file %(cass_file)s" % vars())
+            self.log.info("Ignoring temporary file %(file_path)s" % vars())
             return False
 
         if cass_file.descriptor.keyspace in self.exclude_keyspaces:
@@ -354,12 +380,12 @@ class WatchdogWatcher(events.FileSystemEventHandler):
         if (cass_file.descriptor.keyspace.lower() == "system") and (
             not self.include_system_keyspace):
 
-            self.log.info("Ignoring system keyspace file %(cass_file)s"\
+            self.log.info("Ignoring system keyspace file %(file_path)s"\
                 % vars())
             return False
 
         ks_manifest = cassandra.KeyspaceManifest.from_cass_file(cass_file)
-        self.log.info("Queueing file %(cass_file)s"\
+        self.log.info("Queueing file %(file_path)s"\
             % vars())
         self.file_queue.put((ks_manifest, cass_file))
         return True
@@ -508,7 +534,8 @@ class ValidateSubCommand(SubCommand):
             elif endpoint.exists(cass_file.backup_path):
                 if not self.args.checksum:
                     present_files.append(file_name)
-                elif endpoint.validate_checksum(cass_file):
+                elif endpoint.validate_checksum(cass_file.backup_path, 
+                    cass_file.meta["md5_hex"]):
                     present_files.append(file_name)
                 else:
                     corrupt_files.append(file_name)

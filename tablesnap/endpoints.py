@@ -7,6 +7,9 @@ import os.path
 import pkg_resources
 import shutil
 
+import boto
+from boto.s3 import key
+
 from tablesnap import file_util
 
 # ============================================================================ 
@@ -39,11 +42,15 @@ class EndpointBase(object):
         """
         pass
 
-    def store_with_meta(self, source_path, source_meta, relative_dest_path, 
-        ignore_if_existing=True):
+    def store_with_meta(self, source_path, source_meta, relative_dest_path):
+        """Stores the local file at ``source_path`` at ``relative_dest_path`` 
+        and included.
+        
+        Returns the fully qualified path to the file in the backup. 
+        """
         raise NotImplementedError()
 
-    def read_meta(self, relative_path, ignore_missing=False):
+    def read_meta(self, relative_path):
         """Gets a dict of the meta data associated with the file at the 
         ``relative_path``.
 
@@ -62,6 +69,8 @@ class EndpointBase(object):
     def restore(self, relative_src_path, dest_path):
         """Restores the file in the backup at ``relative_src_path`` to the 
         path at ``dest_path``.
+        
+        Returns the fully qualified backup path.
         """
         raise NotImplementedError()
 
@@ -82,13 +91,13 @@ class EndpointBase(object):
         include_dirs=False, recursive=False):
         raise NotImplementedError()
     
-    def remove_file(self, relative_path, ignore_missing=True):
+    def remove_file(self, relative_path):
         """Removes the file at the ``relative_path``. 
         
         Returns the fill path to the file in the backup."""
         raise NotImplementedError()
 
-    def remove_file_with_meta(self, relative_path, ignore_missing=True):
+    def remove_file_with_meta(self, relative_path):
         """Removes the file at the ``relative_path`` that is expected to 
         have meta data. 
         
@@ -97,7 +106,7 @@ class EndpointBase(object):
 
         
 # ============================================================================ 
-#
+# Local endpoint, mostly for testing. 
 
 class LocalEndpoint(EndpointBase):
     
@@ -125,38 +134,27 @@ class LocalEndpoint(EndpointBase):
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Endpoint Base Overrides 
 
-    def store_with_meta(self, source_path, source_meta, relative_dest_path, 
-        ignore_if_existing=True):
+    def store_with_meta(self, source_path, source_meta, relative_dest_path):
         
-        dest_path = self._safe_dest_path(relative_dest_path, 
-            ignore_if_existing=ignore_if_existing)
-        if not dest_path:
-            return
-
-        # Store the meta data first
-        dest_meta_path = dest_path + self._META_SUFFIX
-        with open(dest_meta_path, "w") as f:
-            f.write(json.dumps(source_meta))
+        dest_path = os.path.join(self.args.backup_base, relative_dest_path)
+        file_util.ensure_dir(dest_path)
         
         # Store the actual file
         shutil.copy(source_path, dest_path)
+        
+        # Store the meta data
+        dest_meta_path = dest_path + self._META_SUFFIX
+        with open(dest_meta_path, "w") as f:
+            f.write(json.dumps(source_meta))
         return
 
-    def read_meta(self, relative_path, ignore_missing=False):
+    def read_meta(self, relative_path):
 
         path = os.path.join(self.args.backup_base, 
             relative_path + "-meta.json")
-        try:
-            with open(path, "r") as f:
-                return json.loads(f.read())
-        except (EnvironmentError) as e:
-            if e.errno == errno.ENOENT and ignore_missing:
-                # not found, just return None to say we could not load remote
-                # file info
-                self.log.debug("Ignoring missing meta file %(path)s" % vars())
-                return {}
-            raise
 
+        with open(path, "r") as f:
+            return json.loads(f.read())
 
     def store_json(self, data, relative_dest_path, ignore_if_existing=True):
 
@@ -164,7 +162,7 @@ class LocalEndpoint(EndpointBase):
             ignore_if_existing=ignore_if_existing)
         if not dest_path:
             return
-
+            z
         with open(dest_path, "w") as f:
             f.write(json.dumps(data))
         return
@@ -188,8 +186,8 @@ class LocalEndpoint(EndpointBase):
 
         path = os.path.join(self.args.backup_base, relative_path)
 
-        current_md5_hex, _  = file_util.file_md5(file_path)
-        return current_md5_hex == expected_md5_hex
+        current_md5, _ = file_util.file_md5(path)
+        return current_md5 == expected_md5_hex
 
     def read_json(self, relative_path, ignore_missing=False):
 
@@ -235,26 +233,24 @@ class LocalEndpoint(EndpointBase):
                 return entries
         return entries
         
-    def remove_file(self, relative_path, ignore_missing=True):
+    def remove_file(self, relative_path):
         
         full_path = os.path.join(self.args.backup_base, relative_path)
-        try:
-            os.remove(full_path)
-        except (EnvironmentError) as e:
-            if e.errno == errno.ENOENT and ignore_missing:
-                return None 
-            raise
 
+        os.remove(full_path)
         file_util.maybe_remove_dirs(os.path.dirname(full_path))
         return full_path
 
-    def remove_file_with_meta(self, relative_path, ignore_missing=True):
+    def remove_file_with_meta(self, relative_path):
         
         # always try to delete meta data
         meta_path = relative_path + self._META_SUFFIX
-        self.remove_file(meta_path, ignore_missing=True)
-        
-        return self.remove_file(relative_path, ignore_missing=ignore_missing)
+        try:
+            self.remove_file(meta_path)
+        except (EnvironmentError) as e:
+            if not (e.errno == errno.ENOENT):
+                raise
+        return self.remove_file(relative_path)
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Custom
@@ -263,11 +259,389 @@ class LocalEndpoint(EndpointBase):
         dest_path = os.path.join(self.args.backup_base, relative_dest_path)
 
         if os.path.isfile(dest_path):
+            #TODO: check MD5
             if ignore_if_existing:
-                self.log.warn("file %(dest_path)s exists skipping" % vars())
                 return None
             else:
                 raise RuntimeError("File %(dest_path)s exists" % vars())
         file_util.ensure_dir(dest_path)
         return dest_path
+
+# ============================================================================ 
+# S3 endpoint
+
+class S3Endpoint(EndpointBase):
+    
+    log = logging.getLogger("%s.%s" % (__name__, "S3Endpoint"))
+    name = "s3"
+
+    def __init__(self, args):
+        self.args = args
+        
+
+        self.log.info("Creating S3 connection.")
+        self.s3_conn = boto.connect_s3(self.args.aws_key, 
+            self.args.aws_secret)
+        self.s3_conn.retries = self.args.retries
+        
+        self.log.debug("Creating S3 bucket %(bucket_name)s" % vars(self.args))
+        self.bucket = self.s3_conn.get_bucket(self.args.bucket_name)
+
+        
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # Endpoint Base Overrides 
+
+    @classmethod
+    def add_arg_group(cls, main_parser):
+
+        group = main_parser.add_argument_group("S3 endpoint", 
+            description="Configuration for the AWS S3 endpoint.")
+
+        group.add_argument('--aws-key', dest='aws_key', default=None,
+            help="AWS API Key")
+        group.add_argument('--aws-secret', dest='aws_secret', 
+            default=None, help="AWS API Secret Key")
+        group.add_argument('--bucket-name', default=None, dest="bucket_name",
+            help='S3 bucket to upload to.')
+            
+        group.add_argument('--max-upload-size-mb', dest='max_upload_size_mb', 
+            type=int, default=5120,
+            help='Max size for files to be uploaded before doing multipart ')
+        group.add_argument('--multipart-chunk-size-mb', 
+            dest='multipart_chunk_size_mb', default=256, type=int,
+            help='Chunk size for multipart uploads (10%% of '
+            'free memory if default is not available)')
+        group.add_argument('--retries', 
+            dest='retries', default=5, type=int,
+            help='Number of times to retry s3 calls')
+
+        return group
+    
+    def store_with_meta(self, source_path, source_meta, relative_dest_path):
+
+        is_multipart_upload = source_meta["size"] > \
+            (self.args.max_upload_size_mb * (1024**2))
+            
+        if is_multipart_upload:
+            return self._do_multi_part_upload(source_path, source_meta, 
+                relative_dest_path)
+        
+        return self._do_single_part_upload(source_path, source_meta, 
+            relative_dest_path)
+
+    def read_meta(self, relative_path):
+        
+        key_name = relative_path
+        fqn = self._fqn(key_name)
+
+        self.log.debug("Starting to read meta for key %(fqn)s " % vars())
+      
+        key = self.bucket.get_key(key_name)
+        if key is None:
+            raise RuntimeError("S3 key %s not found in bucket %s" % (
+                key_name, self.args.bucket_name))
+        
+        self.log.debug("Finished reading meta for key %(fqn)s " % vars())
+        return key.metadata
+
+    def store_json(self, data, relative_dest_path):
+
+        key_name = relative_dest_path
+        fqn = self._fqn(key_name)
+        
+        self.log.debug("Starting to store json to %(fqn)s" % vars())
+        
+        # TODO: Overwrite ? 
+        key = self.bucket.new_key(key_name)
+        key.set_contents_from_string(
+            json.dumps(data),
+            headers={'Content-Type': 'application/json'})
+
+        self.log.debug("Finished storing json to %(fqn)s" % vars())
+        return 
+        
+
+    def read_json(self, relative_dest_path):
+        
+        key_name = relative_dest_path
+        fqn = self._fqn(key_name)
+        
+        self.log.debug("Starting to read json from %(fqn)s" % vars())
+        
+        key = self.bucket.get_key(key_name)
+        data = json.loads(key.get_contents_as_string())
+        self.log.debug("Finished reading json from %(fqn)s" % vars())
+        return data
+        
+    def restore(self, relative_src_path, dest_path):
+        """Restores the file in the backup at ``relative_src_path`` to the 
+        path at ``dest_path``.
+        """
+        
+        key_name = relative_src_path
+        fqn = self._fqn(key_name)
+        
+        self.log.debug("Starting to restore from %(fqn)s to %(dest_path)s" \
+            % vars())
+        
+        s3_key = self.bucket.key(key_name)
+        s3_key.get_contents_to_filename(dest_path)
+
+        self.log.debug("Finished restoring from %(fqn)s to %(dest_path)s" \
+            % vars())
+        return key_name
+        
+
+    def exists(self, relative_path):
+        """Returns ``True`` if the file at ``relative_path`` exists. False 
+        otherwise. 
+        """
+        
+        key_name = relative_path
+        fqn = self._fqn(key_name)
+        
+        self.log.debug("Checking if key %(fqn)s exists" % vars())
+        key = self.bucket.get_key(key_name)
+        return False if key is None else True 
+            
+
+    def validate_checksum(self, relative_path, expected_hash):
+        """Validates that the MD5 checksum of the file in the backup at 
+        ``relative_path`` matches ``expected_md5_hex``.  
+        """
+        
+        key_name = relative_path
+        fqn = self._fqn(key_name)
+
+        self.log.debug("Starting to validate checkum for %(fqn)s" % vars())
+            
+        key = self.bucket.get_key(key_name)
+        if key == None: 
+            self.log.debug("Key %(fqn)s does not exist, is checksum is "\
+                "invalid" % vars())
+            return False
+
+        # original checked size, not any more.
+        key_md5 = key.get_metadata('md5sum')
+        if key_md5:
+            hash_match = expected_hash == key_md5
+            self.log.debug("%s with key hash %s and expected hash %s" % (
+                "Match" if hash_match else "Mismatch", key_md5, expected_hash)
+                )
+            return hash_match
+
+        key_etag = key.etag.strip('"')
+        hash_match = expected_hash == key_etag
+        self.log.debug("%s with key etag %s and expected hash %s" % (
+            "Match" if hash_match else "Mismatch", key_etag, 
+            expected_hash))
+        return hash_match
+
+    def iter_dir(self, relative_path, include_files=True, 
+        include_dirs=False, recursive=False):
+        
+        key_name = relative_path
+        if not key_name.endswith("/"):
+            key_name = key_name + "/"
+        fqn = self._fqn(key_name)
+        
+        self.log.debug("Starting to iterate the dir for %(fqn)s" % vars())
+        
+        if include_files and not include_dirs and not recursive:
+            # easier, we just want to list the keys. 
+            return [
+                key.name.replace(key_name, "")
+                for key in self.bucket.list(prefix=key_name)
+            ]
+        
+        items = []
+        
+        if not recursive:
+            # return files and/or directories in this path
+            for entry in self.bucket.list(prefix=key_name, delimiter="/"):
+                if include_files and isinstance(entry, key.Key):
+                    items.append(entry.name.replace(key_name, ""))
+                elif include_dirs:
+                    items.append(entry.name.replace(key_name, ""))
+            return items
+        
+        # recursive, we need to do a hierarchal list
+        def _walk_keys(inner_key):
+            for entry in self.bucket.list(prefix=key_name, delimiter="/"):
+                if isinstance(entry, key.Key):
+                    yield entry.name
+                else:
+                    # this is a directory. 
+                    yield entry.name
+                    for sub_entry in _walk_keys(entry.name):
+                        yield sub_entry
+        return list(_walk_keys(key_name))
+    
+    def remove_file(self, relative_path):
+        """Removes the file at the ``relative_path``. 
+        
+        Returns the fill path to the file in the backup."""
+        
+        key_name = relative_path
+        bucket_name = self.args.bucket_name
+        
+        self.log.debug("Starting to delete key %(key_name)s in "\
+            "%(bucket_name)s" % vars())
+        
+        s3_key = self._bucket().key(key_name)
+        s3_key.delete()
+
+        self.log.debug("Finished deleting from %(key_name)s in "\
+            "%(bucket_name)s" % vars())
+        return key_name
+
+    def remove_file_with_meta(self, relative_path):
+        """Removes the file at the ``relative_path`` that is expected to 
+        have meta data. 
+        
+        Returns the fill path to the file in the backup."""
+        
+        # In S3 the meta is stored with the key. 
+        return self.remove_file(relative_path)
+        
+
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # Custom
+    
+    def _fqn(self, key_name):
+        """Returns fully qualified name for the bucket and key.
+        
+        Note the fully qualified name is not a url. It has the form 
+        <bucket_name>//key_path"""
+        
+        return  "%s//%s" % (self.args.bucket_name, key_name)
+        
+    def _key_exists_with_hash(self, bucket, key_name, expected_hash):
+        """
+        """
+
+        key = bucket.get_key(key_name)
+        if key == None:
+            self.log.debug('Key %(key_name)s does not exist' % vars())
+            return False
+        
+        self.log.debug('Found key %(key_name)s' % vars())
+
+        # Was checking size, not any more. 
+
+        key_md5 = key.get_metadata('md5sum')
+        if key_md5:
+            hash_match = expected_hash == key_md5
+            self.log.debug("%s with key hash %s and expected hash %s" % (
+                "Match" if hash_match else "Mismatch", key_md5, expected_hash)
+                )
+        else:
+            key_etag = key.etag.strip('"')
+            hash_match = expected_hash == key_etag
+            self.log.debug("%s with key etag %s and expected hash %s" % (
+                "Match" if hash_match else "Mismatch", key_etag, 
+                expected_hash))
+        
+        if hash_match:
+            self.log.info("Remote file at key %(key_name)s exists and "\
+                "hash matches" % vars())
+            return True
+
+        self.log.warning("Remote file at %(key_name)s exists but has a "\
+            "different hash." % vars())
+        return False
+
+    def _do_multi_part_upload(self, source_path, source_meta, key_name):
+        
+        
+        fqn = self._fqn(key_name)
+        self.log.debug("Starting multi part upload of %(source_path)s to "\
+            "%(fqn)s" % vars())
+        mp = bucket.initiate_multipart_upload(key_name, metadata=source_meta)
+        
+        chunk = None
+        try:
+            for part, chunk in enumerate(self._chunk_file(source_path)):
+                chunk_size = chunk.len
+                self.log.debug("Uploading part %(part)s with "\
+                    "size %(chunk_size)s" % vars())
+                try:
+                    mp.upload_part_from_file(chunk, part)
+                finally:
+                    chunk.close()
+        except (Exception):
+            mp.cancel_upload()
+            raise
+
+        mp.complete_upload()
+        self.log.debug("Finished multi part upload of %(source_path)s to "\
+            "%(fqn)s" % vars())
+            
+        return fqn
+
+    def _do_single_part_upload(self, source_path, source_meta, key_name):
+        
+        fqn = self._fqn(key_name)
+        self.log.debug("Starting single part upload of %(source_path)s to "\
+            "%(fqn)s" % vars())
+            
+        key = bucket.new_key(key_name)
+        
+        # All meta data fields have to be strings.
+        key.update_metadata({
+            k : str(v)
+            for k, v in source_meta.iteritems()
+        })
+        
+        # Rebuild the MD5 tuple boto makes
+        md5 = (
+            source_meta["md5_hex"], 
+            source_meta["md5_base64"], 
+            source_meta["size"]
+        )
+        key.set_contents_from_filename(source_path, replace=False, md5=md5)
+
+        self.log.debug("Finished single part upload of %(source_path)s to "\
+            "%(fqn)s" % vars())
+        return fqn
+    
+    def _chunk_file(self, file_path):
+        """Yield chunks from ``file_path``.
+        """
+
+        self.log.debug("Splitting file %(file_path)s" % vars())
+
+        free_bytes = self._free_memory_in_kb() * 1024
+        if free_bytes < self.args.chunk_size_bytes:
+            chunk_size = free / 20
+            mem_desc = "Operating in low memory mode with reduced chunksize "\
+                "%(chunk_size)s." % vars()
+        else:
+            chunk_size = self.s3_config.chunk_size_bytes
+            mem_desc = "Operating in normal mode using configured chunk size."
+
+        self.log.debug("Free memory is %s bytes, configured chuck_size_bytes"\
+            " is %s.%s" % (free_bytes, self.args.chunk_size_bytes, mem_desc))
+
+        with open(file_path, 'rb') as f:
+            chunk = f.read(chunk_size)
+            while chunk:
+                yield StringIO.StringIO(chunk)
+                chunk = f.read(chunk_size)                
+        return
+
+    def _free_memory_in_kb(self):
+        """Returns the free memory in KB as an int.
+        """
+
+        with open('/proc/meminfo', 'r') as f:
+            memlines = f.readlines()
+
+        mem_info = {}
+        for line in memlines:
+            tokens = line.rstrip(' kB\n').split(':')
+            mem_info[tokens[0]] = int(tokens[1].strip())
+
+        return mem_info.get("Cached", 0) + mem_info.get("MemFree", 0) + \
+            mem_info.get("Buffers", 0)
 

@@ -63,8 +63,13 @@ def ensure_dir(path):
     ``path`` may be a file path or directory path. 
     """
 
-    if not os.path.isdir(os.path.dirname(path)):
+    
+    try:
         os.makedirs(os.path.dirname(path))
+    except (EnvironmentError) as e:
+        if not(e.errno == errno.EEXIST and 
+            e.filename == os.path.dirname(path)):
+            raise
     return
 
 def list_dirs(paths, fully_qualified=True, filter_hidden=True):
