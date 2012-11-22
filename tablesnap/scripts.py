@@ -8,6 +8,8 @@ import traceback
 
 import pkg_resources
 
+import endpoints
+
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Sub Commands take the command line args and call the function to do the 
 # work. Sub commands are retrieved from the ``tablesnap.sub_commands`` entry 
@@ -103,6 +105,8 @@ def tablesnap_main():
     try:
         # parsing the args works out which function we want to call.
         sub_command = args.func(args)
+        endpoints.validate_args(args)
+        
         if callable(sub_command):
             rv, out = sub_command()
         else:

@@ -268,8 +268,8 @@ class SnapWorkerThread(SubCommandWorkerThread):
                 if not(e.errno == errno.ENOENT and \
                     e.filename==cass_file.original_path):
                     raise
-                self.log.info("Aborted uploading %(cass_file)s was removed" %\
-                    vars())
+                self.log.info("Aborted uploading %s as it was removed" %\
+                    (cass_file.original_path,))
             self.file_q.task_done()
         return
 
@@ -291,8 +291,8 @@ class SnapWorkerThread(SubCommandWorkerThread):
                 self.log.info("Skipping file %s skipping as there is a "\
                     "valid backup"% (cass_file.original_path,))
             else:
-                self.log.warn("Possibly corrupt file %s in the backup at %s"\
-                    " skipping." % (cass_file.original_path, full_path))
+                self.log.warn("Possibly corrupt file %s in the backup, "\
+                    "skipping." % (cass_file.original_path,))
             return False
 
         uploaded_path = endpoint.store_with_meta(cass_file.original_path,
@@ -446,11 +446,14 @@ class ListSubCommand(SubCommand):
         buffer = [("All backups" if self.args.list_all else "Latest backup")\
             + " for keyspace %(keyspace)s from %(host)s:" % vars(
             self.args)]
-
-        for file_name in manifests:
-            name, _ = os.path.splitext(file_name)
-            buffer.append(name)
-
+        
+        if manifests:
+            for file_name in manifests:
+                name, _ = os.path.splitext(file_name)
+                buffer.append(name)
+        else:
+            buffer.append("None")
+            
         self.log.info("Finished sub command %s" % self.command_name)
         return (0, "\n".join(buffer)) 
 
@@ -524,10 +527,10 @@ class ValidateSubCommand(SubCommand):
             try:
                 cass_file.meta = endpoint.read_meta(cass_file.backup_path)
             except (EnvironmentError) as e:
-                if e == errno.ENOENT:
-                    # missing file. 
-                    cass_file = None    
-                raise
+                if e.errno != errno.ENOENT:
+                    raise
+                # missing file is ok. 
+                cass_file = None    
 
             if cass_file is None:
                 missing_files.append(file_name)
@@ -598,9 +601,9 @@ class SlurpSubCommand(SubCommand):
         sub_parser.add_argument("--threads", type=int, default=1,
             help='Number of writer threads.')
 
-        sub_parser.add_argument("cassandra_data_dir", 
-            help="Top level Cassandra data directory, normally "\
-            "/var/lib/cassandra/data.")
+        sub_parser.add_argument("--cassandra_data_dir", 
+            default="/var/lib/cassandra/data",
+            help="Top level Cassandra data directory.")
 
         sub_parser.add_argument('backup_name',  
             help="Backup to restore.")
@@ -702,6 +705,7 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             should_restore, reason = self._should_restore(cass_file, 
                 dest_path)
             if should_restore:
+                file_util.ensure_dir(dest_path)
                 endpoint.restore(cass_file.backup_path, dest_path)
                 self.log.info("Restored file %(cass_file)s to %(dest_path)s"\
                      % vars())

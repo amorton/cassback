@@ -1,5 +1,6 @@
 
 import argparse
+import cStringIO
 import errno
 import json
 import logging
@@ -26,6 +27,19 @@ def create_from_args(args):
 
     raise RuntimeError("Unknown endpoint name %(endpoint_name)s" % vars())
 
+def validate_args(args):
+
+    endpoint_name = args.endpoint
+    for entry_point in pkg_resources.iter_entry_points("tablesnap.endpoints"):            
+        
+        endpoint_class = entry_point.load()
+        if endpoint_class.name == endpoint_name:
+            endpoint_class.validate_args(args)
+            return
+
+    raise RuntimeError("Unknown endpoint name %(endpoint_name)s" % vars())
+
+
 # ============================================================================ 
 #
 
@@ -41,7 +55,11 @@ class EndpointBase(object):
         """
         """
         pass
-
+    
+    @classmethod
+    def validate_args(cls, args):
+        pass
+        
     def store_with_meta(self, source_path, source_meta, relative_dest_path):
         """Stores the local file at ``source_path`` at ``relative_dest_path`` 
         and included.
@@ -173,8 +191,6 @@ class LocalEndpoint(EndpointBase):
         src_path = os.path.join(self.args.backup_base, relative_src_path)
         self.log.debug("Restoring file %(src_path)s to %(dest_path)s" % \
             vars())
-
-        file_util.ensure_dir(dest_path)
         shutil.copy(src_path, dest_path)
         return
 
@@ -290,7 +306,7 @@ class S3Endpoint(EndpointBase):
         
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Endpoint Base Overrides 
-
+    
     @classmethod
     def add_arg_group(cls, main_parser):
 
@@ -317,6 +333,15 @@ class S3Endpoint(EndpointBase):
 
         return group
     
+    @classmethod
+    def validate_args(cls, args):
+        
+        if args.multipart_chunk_size_mb < 5:
+            # S3 has a minimum. 
+            raise argparse.ArgumentTypeError("Minimum "\
+                "multipart_chunk_size_mb value is 5.")
+        return
+
     def store_with_meta(self, source_path, source_meta, relative_dest_path):
 
         is_multipart_upload = source_meta["size"] > \
@@ -338,8 +363,7 @@ class S3Endpoint(EndpointBase):
       
         key = self.bucket.get_key(key_name)
         if key is None:
-            raise RuntimeError("S3 key %s not found in bucket %s" % (
-                key_name, self.args.bucket_name))
+            raise EnvironmentError(errno.ENOENT, fqn)
         
         self.log.debug("Finished reading meta for key %(fqn)s " % vars())
         return key.metadata
@@ -369,6 +393,8 @@ class S3Endpoint(EndpointBase):
         self.log.debug("Starting to read json from %(fqn)s" % vars())
         
         key = self.bucket.get_key(key_name)
+        if key is None:
+            raise EnvironmentError(errno.ENOENT, fqn)
         data = json.loads(key.get_contents_as_string())
         self.log.debug("Finished reading json from %(fqn)s" % vars())
         return data
@@ -384,8 +410,10 @@ class S3Endpoint(EndpointBase):
         self.log.debug("Starting to restore from %(fqn)s to %(dest_path)s" \
             % vars())
         
-        s3_key = self.bucket.key(key_name)
-        s3_key.get_contents_to_filename(dest_path)
+        key = self.bucket.get_key(key_name)
+        if key is None:
+            raise EnvironmentError(errno.ENOENT, fqn)
+        key.get_contents_to_filename(dest_path)
 
         self.log.debug("Finished restoring from %(fqn)s to %(dest_path)s" \
             % vars())
@@ -489,6 +517,9 @@ class S3Endpoint(EndpointBase):
             "%(bucket_name)s" % vars())
         
         s3_key = self._bucket().key(key_name)
+        if key is None:
+            self.log.debug("Key %(key_name)s was already deleted." % vars())
+            return
         s3_key.delete()
 
         self.log.debug("Finished deleting from %(key_name)s in "\
@@ -557,14 +588,19 @@ class S3Endpoint(EndpointBase):
         fqn = self._fqn(key_name)
         self.log.debug("Starting multi part upload of %(source_path)s to "\
             "%(fqn)s" % vars())
-        mp = bucket.initiate_multipart_upload(key_name, metadata=source_meta)
+        # All meta tags must be strings
+        metadata = {
+            k : str(v)
+            for k,v in source_meta.iteritems() 
+        }
+        mp = self.bucket.initiate_multipart_upload(key_name, 
+            metadata=metadata)
         
         chunk = None
         try:
-            for part, chunk in enumerate(self._chunk_file(source_path)):
-                chunk_size = chunk.len
-                self.log.debug("Uploading part %(part)s with "\
-                    "size %(chunk_size)s" % vars())
+            # Part numbers must start at 1self.
+            for part, chunk in enumerate(self._chunk_file(source_path),1):
+                self.log.debug("Uploading part %(part)s with" % vars())
                 try:
                     mp.upload_part_from_file(chunk, part)
                 finally:
@@ -585,7 +621,7 @@ class S3Endpoint(EndpointBase):
         self.log.debug("Starting single part upload of %(source_path)s to "\
             "%(fqn)s" % vars())
             
-        key = bucket.new_key(key_name)
+        key = self.bucket.new_key(key_name)
         
         # All meta data fields have to be strings.
         key.update_metadata({
@@ -608,40 +644,37 @@ class S3Endpoint(EndpointBase):
     def _chunk_file(self, file_path):
         """Yield chunks from ``file_path``.
         """
-
-        self.log.debug("Splitting file %(file_path)s" % vars())
-
-        free_bytes = self._free_memory_in_kb() * 1024
-        if free_bytes < self.args.chunk_size_bytes:
-            chunk_size = free / 20
-            mem_desc = "Operating in low memory mode with reduced chunksize "\
-                "%(chunk_size)s." % vars()
-        else:
-            chunk_size = self.s3_config.chunk_size_bytes
-            mem_desc = "Operating in normal mode using configured chunk size."
-
-        self.log.debug("Free memory is %s bytes, configured chuck_size_bytes"\
-            " is %s.%s" % (free_bytes, self.args.chunk_size_bytes, mem_desc))
+        
+        chunk_bytes = self.args.multipart_chunk_size_mb * (1024**2)
+        
+        self.log.debug("Splitting file %(file_path)s into chunks of "\
+            "%(chunk_bytes)s bytes" % vars())
 
         with open(file_path, 'rb') as f:
-            chunk = f.read(chunk_size)
+            chunk = f.read(chunk_bytes)
             while chunk:
-                yield StringIO.StringIO(chunk)
-                chunk = f.read(chunk_size)                
+                yield cStringIO.StringIO(chunk)
+                chunk = f.read(chunk_bytes)                
         return
 
-    def _free_memory_in_kb(self):
-        """Returns the free memory in KB as an int.
-        """
-
-        with open('/proc/meminfo', 'r') as f:
-            memlines = f.readlines()
-
-        mem_info = {}
-        for line in memlines:
-            tokens = line.rstrip(' kB\n').split(':')
-            mem_info[tokens[0]] = int(tokens[1].strip())
-
-        return mem_info.get("Cached", 0) + mem_info.get("MemFree", 0) + \
-            mem_info.get("Buffers", 0)
-
+    # def _free_memory_in_kb(self):
+    #     """Returns the free memory in KB as an int.
+    #     """
+    # 
+    #     if sys.platform == 'win32':
+    #         raise RuntimeError("Using the windows is not supported.")
+    #         
+    #     if 'linux' in sys.platform:
+    #         with open('/proc/meminfo', 'r') as f:
+    #             memlines = f.readlines()
+    # 
+    #         mem_info = {}
+    #         for line in memlines:
+    #             tokens = line.rstrip(' kB\n').split(':')
+    #             mem_info[tokens[0]] = int(tokens[1].strip())
+    # 
+    #         return mem_info.get("Cached", 0) + mem_info.get("MemFree", 0) + \
+    #             mem_info.get("Buffers", 0)
+    # 
+    #     if sys.platform == 'darwin':
+            
