@@ -7,6 +7,7 @@ import logging
 import os.path
 import pkg_resources
 import shutil
+import time
 
 import boto
 from boto.s3 import key
@@ -122,7 +123,23 @@ class EndpointBase(object):
         Returns the fill path to the file in the backup."""
         raise NotImplementedError()
 
+
+class TransferTiming(object):
+    
+    def __init__(self, logger, path, size):
+        self.log = logger
+        self.path = path
+        self.start_ms = int(time.time() * 1000)
+        self.size = size # bytes
         
+    def report(self):
+        self.duration_ms = int(time.time() * 1000) - self.start_ms
+        self.throughput_mb_sec = ((self.size * 1.0) / (1024**2)) / (
+            self.duration_ms * 1.0)
+        
+        self.log.info("Transfered file {path} in {duration_ms:d} ms size "\
+            "{size} at {throughput_mb_sec:f} MB/sec".format(**vars(self)))
+            
 # ============================================================================ 
 # Local endpoint, mostly for testing. 
 
@@ -346,14 +363,18 @@ class S3Endpoint(EndpointBase):
 
         is_multipart_upload = source_meta["size"] > \
             (self.args.max_upload_size_mb * (1024**2))
-            
-        if is_multipart_upload:
-            return self._do_multi_part_upload(source_path, source_meta, 
-                relative_dest_path)
         
-        return self._do_single_part_upload(source_path, source_meta, 
+        timing = TransferTiming(self.log, fqn, source_meta["size"])
+        if is_multipart_upload:
+            path = self._do_multi_part_upload(source_path, source_meta, 
+                relative_dest_path)
+        else:
+            path = self._do_single_part_upload(source_path, source_meta, 
             relative_dest_path)
-
+        timing.report()
+        
+        return path
+        
     def read_meta(self, relative_path):
         
         key_name = relative_path
@@ -413,10 +434,10 @@ class S3Endpoint(EndpointBase):
         key = self.bucket.get_key(key_name)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
+        timing = TransferTiming(self.log, fqn, int(key.metadata["size"]))
         key.get_contents_to_filename(dest_path)
-
-        self.log.debug("Finished restoring from %(fqn)s to %(dest_path)s" \
-            % vars())
+        timing.report()
+        
         return key_name
         
 
@@ -453,16 +474,19 @@ class S3Endpoint(EndpointBase):
         key_md5 = key.get_metadata('md5sum')
         if key_md5:
             hash_match = expected_hash == key_md5
-            self.log.debug("%s with key hash %s and expected hash %s" % (
-                "Match" if hash_match else "Mismatch", key_md5, expected_hash)
-                )
+            log_func = self.log.debug if hash_match else self.log.warn
+            log_func("%s with key %s hash %s and expected hash %s" % (
+                "Match" if hash_match else "Mismatch", fqn, key_md5, 
+                expected_hash))
             return hash_match
 
         key_etag = key.etag.strip('"')
         hash_match = expected_hash == key_etag
-        self.log.debug("%s with key etag %s and expected hash %s" % (
-            "Match" if hash_match else "Mismatch", key_etag, 
+        log_func = self.log.debug if hash_match else self.log.warn
+        log_func("%s with key %s etag %s and expected hash %s" % (
+            "Match" if hash_match else "Mismatch", fqn,key_etag, 
             expected_hash))
+            
         return hash_match
 
     def iter_dir(self, relative_path, include_files=True, 
@@ -547,43 +571,7 @@ class S3Endpoint(EndpointBase):
         
         return  "%s//%s" % (self.args.bucket_name, key_name)
         
-    def _key_exists_with_hash(self, bucket, key_name, expected_hash):
-        """
-        """
-
-        key = bucket.get_key(key_name)
-        if key == None:
-            self.log.debug('Key %(key_name)s does not exist' % vars())
-            return False
-        
-        self.log.debug('Found key %(key_name)s' % vars())
-
-        # Was checking size, not any more. 
-
-        key_md5 = key.get_metadata('md5sum')
-        if key_md5:
-            hash_match = expected_hash == key_md5
-            self.log.debug("%s with key hash %s and expected hash %s" % (
-                "Match" if hash_match else "Mismatch", key_md5, expected_hash)
-                )
-        else:
-            key_etag = key.etag.strip('"')
-            hash_match = expected_hash == key_etag
-            self.log.debug("%s with key etag %s and expected hash %s" % (
-                "Match" if hash_match else "Mismatch", key_etag, 
-                expected_hash))
-        
-        if hash_match:
-            self.log.info("Remote file at key %(key_name)s exists and "\
-                "hash matches" % vars())
-            return True
-
-        self.log.warning("Remote file at %(key_name)s exists but has a "\
-            "different hash." % vars())
-        return False
-
     def _do_multi_part_upload(self, source_path, source_meta, key_name):
-        
         
         fqn = self._fqn(key_name)
         self.log.debug("Starting multi part upload of %(source_path)s to "\

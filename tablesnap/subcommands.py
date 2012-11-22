@@ -186,6 +186,10 @@ class SnapSubCommand(SubCommand):
 
         sub_parser.add_argument("--threads", type=int, default=4,
             help='Number of writer threads.')
+        sub_parser.add_argument("--report-interval-secs", type=int, default=5,
+            dest="report_interval_secs",
+            help='Interval to report on the size of the work queue.')
+            
         sub_parser.add_argument('--recursive', action='store_true', 
             default=False,
             help='Recursively watch the given path(s)s for new SSTables')
@@ -228,7 +232,13 @@ class SnapSubCommand(SubCommand):
         ]
         for worker in self.workers:
             worker.start()
-
+        
+        if self.args.report_intervel_secs > 0:
+            reporter = SnapReporterThread(file_q, 
+                self.args.report_intervel_secs)
+            reporter.start()
+        else:
+            self.log.info("Progress reporting is disabled.")
         # Start the watcher
         watcher.start()
 
@@ -303,7 +313,29 @@ class SnapWorkerThread(SubCommandWorkerThread):
         self.log.info("Uploaded file %s to %s" % (cass_file.original_path, 
             uploaded_path))
         return True
+
+class SnapReporterThread(SubCommandWorkerThread):
+    """Watches the work queue and reports on progress. """
+    log = logging.getLogger("%s.%s" % (__name__, "SnapReporterThread"))
+    
+    def __init__(self, file_q, interval):
+        super(SnapReporterThread, self).__init__("SnapReporter-", 0)
+        self.interval = interval
+        self.file_q = file_q
+    
+    def _do_run(self):
         
+        last_size = 0
+        while True:
+            
+            size = self.file_q.qsize()
+            if size > 0 or (size != last_size):
+                self.log.info("Snap worker queue contains %s items "\
+                    "(does not include taks in progress)" % (size),)
+            last_size = size
+            time.sleep(self.interval)
+        return
+
 
 class WatchdogWatcher(events.FileSystemEventHandler):
     """Watch the disk for new files."""
@@ -441,8 +473,14 @@ class ListSubCommand(SubCommand):
     def __call__(self):
 
         self.log.info("Starting sub command %s" % self.command_name)
-
-        manifests = self._list_manifests()
+        
+        endpoint = endpoints.create_from_args(self.args)
+        manifests = self._list_manifests(endpoint, self.args.keyspace,
+            self.args.host)
+            
+        if not self.args.list_all and manifests:
+            manifests = [max(manifests),]
+        
         buffer = [("All backups" if self.args.list_all else "Latest backup")\
             + " for keyspace %(keyspace)s from %(host)s:" % vars(
             self.args)]
@@ -457,24 +495,18 @@ class ListSubCommand(SubCommand):
         self.log.info("Finished sub command %s" % self.command_name)
         return (0, "\n".join(buffer)) 
 
-    def _list_manifests(self):
+    def _list_manifests(self, endpoint, keyspace, host):
         
-        endpoint = endpoints.create_from_args(self.args)
-        manifest_dir = cassandra.KeyspaceManifest.backup_dir(
-            self.args.keyspace) 
+        manifest_dir = cassandra.KeyspaceManifest.backup_dir(keyspace) 
 
         host_manifests = []
         for file_name in endpoint.iter_dir(manifest_dir):
             backup_name, _ = os.path.splitext(file_name)
             manifest = cassandra.KeyspaceManifest.from_backup_name(
                 backup_name)
-            if manifest.host == self.args.host:
+            if manifest.host == host:
                 host_manifests.append(file_name)
-
-        if self.args.list_all:
-            return host_manifests
-        return [max(host_manifests),]
-
+        return host_manifests
 
 # ============================================================================
 # Validate - validate that all files in a backup are present
@@ -600,7 +632,10 @@ class SlurpSubCommand(SubCommand):
 
         sub_parser.add_argument("--threads", type=int, default=1,
             help='Number of writer threads.')
-
+        sub_parser.add_argument("--report-interval-secs", type=int, default=5,
+            dest="report_interval_secs",
+            help='Interval to report on the size of the work queue.')
+            
         sub_parser.add_argument("--cassandra_data_dir", 
             default="/var/lib/cassandra/data",
             help="Top level Cassandra data directory.")
@@ -639,9 +674,15 @@ class SlurpSubCommand(SubCommand):
             self._create_worker_thread(i, work_queue, result_queue)
             for i in range(self.args.threads)
         ]
-
         for worker in workers:
             worker.start()
+            
+        if self.args.report_interval_secs > 0:
+            reporter = SlurpReporterThread(work_queue, 
+                self.args.report_interval_secs)
+            reporter.start()
+        else:
+            self.log.info("Progress reporting is disabled.")
 
         # Wait for the work queue to empty. 
         self.log.info("Waiting on workers.")
@@ -669,6 +710,28 @@ class SlurpSubCommand(SubCommand):
         return SlurpWorkerThread(i, work_queue, result_queue, 
             copy.copy(self.args))
 
+class SlurpReporterThread(SubCommandWorkerThread):
+    """Watches the work queue and reports on progress. """
+    log = logging.getLogger("%s.%s" % (__name__, "SlurpReporterThread"))
+    
+    def __init__(self, work_queue, interval):
+        super(SlurpReporterThread, self).__init__("SlurpReporter-", 0)
+        self.interval = interval
+        self.work_queue = work_queue
+    
+    def _do_run(self):
+        
+        last_size = 0
+        while True:
+            
+            size = self.work_queue.qsize()
+            if size > 0 or (size != last_size):
+                self.log.info("Slurp worker queue contains %s items "\
+                    "(does not include taks in progress)" % (size),)
+            last_size = size
+            time.sleep(self.interval)
+        return
+        
 class SlurpWorkerThread(SubCommandWorkerThread):
     log = logging.getLogger("%s.%s" % (__name__, "SlurpWorkerThread"))
 
