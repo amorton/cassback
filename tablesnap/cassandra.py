@@ -33,50 +33,10 @@ _SAFE_DT_FMT = "%Y_%m_%dT%H_%M_%S_%f"
 def _to_safe_datetime_fmt(dt):
     """Convert the datetime ``dt`` instance to a file system safe format. 
     """
-
     return dt.strftime(_SAFE_DT_FMT)
 
 def _from_safe_datetime_fmt(dt_str):
     return datetime.datetime.strptime(dt_str, _SAFE_DT_FMT)
-
-
-# ============================================================================
-# Version / Feature detection
-
-# _version = (1,1,0)
-
-# def set_version(raw_version):
-
-#     global _version
-#     if isinstance(raw_version, basestring):
-#         tokens = raw_version.split(".")
-#     else:
-#         tokens = raw_version[:3]
-    
-#     if not len(tokens) == 3:
-#         raise ValueError("Not enough tokens in version %(raw_version)s" %\
-#             vars())
-#     try:
-#         _version = tuple(
-#             int(i)
-#             for i in tokens
-#         )
-#     except (ValueError) as e:
-#         raise ValueError("Non integer part in version %(raw_version)s" %\
-#             vars())
-#     log.info("Cassandra version set to %(_version)s" % vars())
-#     return
-
-# def get_version():
-#     global _version
-#     return _version
-
-# def ver_has_per_cf_directory():
-#     global _version
-#     return _version >= (1,1,0)
-
-def ver_has_per_cf_directory(vers):
-    return vers >= (1,1,0)
 
 def is_snapshot_path(file_path):
 
@@ -283,13 +243,9 @@ class CassandraFile(object):
 
         assert self.original_path and os.path.isfile(self.original_path)
 
-        if ver_has_per_cf_directory(self.descriptor.cass_version):
-            # data/keyspace/cf/files.db
-            ks_dir = os.path.abspath(os.path.join(os.path.dirname(
-                self.original_path), os.path.pardir))
-        else:
-            # data/keyspace/files.db
-            ks_dir = os.path.abspath(os.path.dirname(self.original_path))
+        # data/keyspace/cf/files.db
+        ks_dir = os.path.abspath(os.path.join(os.path.dirname(
+            self.original_path), os.path.pardir))
 
         assert os.path.isdir(ks_dir)
         return ks_dir
@@ -332,17 +288,14 @@ class KeyspaceManifest(object):
         def gen_cf_files():
 
             ks_dir = cass_file.keyspace_dir
-            if ver_has_per_cf_directory(cass_file.descriptor.cass_version):
-                _, cf_dirs, _ = os.walk(ks_dir).next()
-                for cf_dir in cf_dirs:
-                    _, _, cf_files = os.walk(os.path.join(ks_dir, cf_dir
-                        )).next()
-                    for cf_file in cf_files:
-                        yield os.path.join(cf_dir, cf_file)
-            else:
-                _, _, cf_files = os.walk(ks_dir).next()
+
+            _, cf_dirs, _ = os.walk(ks_dir).next()
+            for cf_dir in cf_dirs:
+                _, _, cf_files = os.walk(os.path.join(ks_dir, cf_dir
+                    )).next()
                 for cf_file in cf_files:
-                    yield os.path.join(ks_dir, cf_file)
+                    yield os.path.join(cf_dir, cf_file)
+
 
         column_families = {}
         for cf_file_path in gen_cf_files():

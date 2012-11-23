@@ -72,60 +72,9 @@ def ensure_dir(path):
             raise
     return
 
-def list_dirs(paths, fully_qualified=True, filter_hidden=True):
-    """Lists the directories in a path. 
-
-    ``paths`` is a list of paths to list from.
-
-    if ``fully_qualified`` is specified the fully qualified directory path is
-    returned, otherwise the local name is used. If ``filter_hidden`` hidden 
-    files are not included in the result. 
-    """
-    return _list_entries(True, paths,fully_qualified=fully_qualified, 
-        filter_hidden=filter_hidden)
-
-def list_files(paths, fully_qualified=True, filter_hidden=True):
-    return _list_entries(False, paths,fully_qualified=fully_qualified, 
-        filter_hidden=filter_hidden)
-
-def _list_entries(list_dirs, paths, fully_qualified=True, filter_hidden=True):
-
-    if isinstance(paths, basestring):
-        paths = [paths]
-
-    entries = []
-    for path in paths:
-        try:
-            if list_dirs:
-                _, raw_items, _ = os.walk(path).next()
-            else:
-                _, _, raw_items = os.walk(path).next()
-        except (StopIteration):
-            # no items
-            pass
-
-        if filter_hidden:
-            filtered = (
-                raw_item
-                for raw_item in raw_items
-                if not raw_item.startswith(".")
-            )
-        else:
-            filtered = raw_items
-
-        if fully_qualified:
-            entries.extend(
-                os.path.join(path, raw_item)
-                for raw_item in raw_items
-            )
-        else:
-            entries.extend(raw_items)
-    return entries
-
 def maybe_remove_dirs(path):
     """Like :func:`os.removedirs` but ignores the error if the directory 
     is not empty.  
-
     """
 
     try:
