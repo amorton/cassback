@@ -3,9 +3,11 @@
 import argparse
 import copy
 import errno
+import grp
 import logging
 import os
 import os.path
+import pwd
 import Queue
 import socket
 import signal
@@ -639,15 +641,50 @@ class SlurpSubCommand(SubCommand):
         sub_parser.add_argument("--cassandra_data_dir", 
             default="/var/lib/cassandra/data",
             help="Top level Cassandra data directory.")
+        
+        sub_parser.add_argument("--owner", 
+            help="User to take ownership of restored files. Overrides "\
+                "ownership included in the backup.")
+        sub_parser.add_argument("--group", 
+            help="Group to take ownership of restored files. Overrides "\
+                "ownership included in the backup.")
 
+        sub_parser.add_argument("--no-chown", default=False, 
+            action="store_true", dest="no_chown",
+            help="Do not chown files after restoring. Ignores owner, group "\
+            "and the ownership included in the backup.")
+        
+        sub_parser.add_argument("--no-chmod", default=False, 
+            action="store_true", dest="no_chmod",
+            help="Do not chmod files after restoring. Ignores the "\
+            "file mode included in the backup.")
+            
         sub_parser.add_argument('backup_name',  
             help="Backup to restore.")
 
         return sub_parser
 
     def __init__(self, args):
+        self._validate_args(args)
         self.args = args
-
+        
+    def _validate_args(self, args):
+        
+        if args.owner and not args.no_chown:
+            try:
+                pwd.getpwnam(args.owner)
+            except (KeyError):
+                raise argparse.ArgumentError(args.user, 
+                    "Unknown user {user}".format(user=args.owner))
+        
+        if args.group and not args.no_chown:
+            try:
+                grp.getgrnam(args.group)
+            except (KeyError):
+                raise argparse.ArgumentError(args.group, 
+                    "Unknown group {group}".format(group=group))
+        return 
+        
     def __call__(self):
 
         self.log.info("Starting sub command %s" % self.command_name)
@@ -768,11 +805,20 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             should_restore, reason = self._should_restore(cass_file, 
                 dest_path)
             if should_restore:
+                
+                meta = endpoint.read_meta(cass_file.backup_path)
+                
                 file_util.ensure_dir(dest_path)
-                endpoint.restore(cass_file.backup_path, dest_path)
+                endpoint.restore(cass_file.backup_path, dest_path)    
                 self.log.info("Restored file %(cass_file)s to %(dest_path)s"\
                      % vars())
+                
+                if not self.args.no_chown:
+                    self._chown_restored_file(dest_path, meta, 
+                        self.args.owner, self.args.group)
+                        
                 self.result_queue.put((file_name, dest_path))
+            
             else:
                 self.log.info("Skipping file %(cass_file)s because "\
                     "%(reason)s" % vars())
@@ -795,7 +841,53 @@ class SlurpWorkerThread(SubCommandWorkerThread):
             return (False, "Existing file")
 
         return (True, None)
+    
+    def _chown_restored_file(self, path, meta, arg_user, arg_grp):
+        """Restore ownership of the file at ``path`` to either the 
+        user and group in ``meta`` or the ``arg_user`` and ``arg_grp`` if 
+        specified.
+        """
+        
+        user = arg_user or meta.get("user")
+        if not user:
+            self.log.warn("Could not determine user name to chown "\
+                "{path}".format(dest_path=dest_path))
+            uid = -1
+        else:
+            # will raise a KeyError on error. 
+            # let it fail.
+            uid = pwd.getpwnam(user).pw_uid
+        
+        group = arg_grp or meta.get("group")
+        if not group:
+            self.log.warn("Could not determine group name to chown "\
+                "{path}".format(dest_path=dest_path))
+            gid = -1
+        else:
+            # will raise a KeyError on error. 
+            # let it fail.
+            gid = grp.getgrnam(group).gr_gid
+            
+        self.log.debug("chowning {path} to {user}/{uid} and "\
+            "{group}/{gid}".format(**vars()))
+        os.chown(path, uid, gid)
+        return
 
+    def _chmod_restored_file(self, path, meta):
+        """Restore fule mode of the file at ``path``.
+        """
+        
+        mode = meta.get("mode")
+        if mode is None:
+            self.log.warn("Could not determine file mode to chmod "\
+                "{path}".format(dest_path=dest_path))
+            return
+
+        self.log.debug("chmoding {path} to {mode}".format(path=path, 
+            mode=mode))
+        os.chmod(path, mode)
+        return
+        
 # ============================================================================
 # Purge - remove files from the backup
 

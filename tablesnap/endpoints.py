@@ -132,14 +132,60 @@ class TransferTiming(object):
         self.start_ms = int(time.time() * 1000)
         self.size = size # bytes
         
-    def report(self):
-        self.duration_ms = int(time.time() * 1000) - self.start_ms
-        self.throughput_mb_sec = ((self.size * 1.0) / (1024**2)) / (
-            self.duration_ms * 1.0)
+        # number of boto callbacks we should ask for. 
+        mb = 1024 **2
+        pattern = [
+            (1 * mb, 0),    # 1MB, none
+            (10 * mb, 1),   # 10MB, 1
+            (100 * mb, 2),  # 100MB, 2
+            (1024 * mb, 5), # 1GB , 5
+            (10 * 1024 * mb, ), # 10GB , 10
+        ]
         
-        self.log.info("Transfered file {path} in {duration_ms:d} ms size "\
-            "{size} at {throughput_mb_sec:f} MB/sec".format(**vars(self)))
-            
+        self.num_callbacks = 20
+        for i, j in pattern:
+            if self.size < i:
+                self.num_callbacks = j
+                break
+
+    def progress(self, progress, total):
+        """Boto progress callback function. 
+        
+        Logs the progress. 
+        """
+        
+        path = self.path
+        elapsed_ms = int(time.time() * 1000) - self.start_ms
+        throughput = ((progress * 1.0) / (1024**2)) / (elapsed_ms)
+        
+        if progress == total:
+            pattern = "Transfered file {path} in {elapsed_ms:d} ms size "\
+            "{total} at {throughput:f} MB/sec"
+        else:
+            pattern = "Progress transfering file {path} elapsed "\
+            "{elapsed_ms:d} ms, transferred "\
+            "{progress} at {throughput:f} MB/sec {total} "\
+            "total"
+
+        self.log.debug(pattern.format(**vars()))
+        return
+    
+    def __enter__(self):
+        """Entry function when used as a context."""
+        
+        # Nothing to do. 
+        return self
+        
+    def __exit__(self, exc_type, exc_value, traceback):
+        
+        if exc_value is not None:
+            # There was an error, let's just get out of here.
+            return False
+        
+        # report 100% progress.
+        self.progress(self.size, self.size)
+        return False
+        
 # ============================================================================ 
 # Local endpoint, mostly for testing. 
 
@@ -175,7 +221,8 @@ class LocalEndpoint(EndpointBase):
         file_util.ensure_dir(dest_path)
         
         # Store the actual file
-        shutil.copy(source_path, dest_path)
+        with TransferTiming(self.log, dest_path, source_meta["size"]):
+            shutil.copy(source_path, dest_path)
         
         # Store the meta data
         dest_meta_path = dest_path + self._META_SUFFIX
@@ -187,7 +234,7 @@ class LocalEndpoint(EndpointBase):
 
         path = os.path.join(self.args.backup_base, 
             relative_path + "-meta.json")
-
+        
         with open(path, "r") as f:
             return json.loads(f.read())
 
@@ -208,7 +255,10 @@ class LocalEndpoint(EndpointBase):
         src_path = os.path.join(self.args.backup_base, relative_src_path)
         self.log.debug("Restoring file %(src_path)s to %(dest_path)s" % \
             vars())
-        shutil.copy(src_path, dest_path)
+        
+        size = os.stat(src_path).st_size
+        with TransferTiming(self.log, src_path, size):
+            shutil.copy(src_path, dest_path)
         return
 
     def exists(self, relative_path):
@@ -364,14 +414,12 @@ class S3Endpoint(EndpointBase):
         is_multipart_upload = source_meta["size"] > \
             (self.args.max_upload_size_mb * (1024**2))
         
-        timing = TransferTiming(self.log, fqn, source_meta["size"])
         if is_multipart_upload:
             path = self._do_multi_part_upload(source_path, source_meta, 
                 relative_dest_path)
         else:
             path = self._do_single_part_upload(source_path, source_meta, 
             relative_dest_path)
-        timing.report()
         
         return path
         
@@ -398,9 +446,12 @@ class S3Endpoint(EndpointBase):
         
         # TODO: Overwrite ? 
         key = self.bucket.new_key(key_name)
+        json_str = json.dumps(data)
+        timing = TransferTiming(self.log, fqn, len(json_str))
         key.set_contents_from_string(
-            json.dumps(data),
-            headers={'Content-Type': 'application/json'})
+            json_str,
+            headers={'Content-Type': 'application/json'}, 
+            cb=timing.progress, num_cb=timing.num_callbacks)
 
         self.log.debug("Finished storing json to %(fqn)s" % vars())
         return 
@@ -416,7 +467,9 @@ class S3Endpoint(EndpointBase):
         key = self.bucket.get_key(key_name)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
-        data = json.loads(key.get_contents_as_string())
+        timing = TransferTiming(self.log, fqn, 0)
+        data = json.loads(key.get_contents_as_string(cb=timing.progress, 
+            num_cb=timing.num_callbacks))
         self.log.debug("Finished reading json from %(fqn)s" % vars())
         return data
         
@@ -435,11 +488,11 @@ class S3Endpoint(EndpointBase):
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
         timing = TransferTiming(self.log, fqn, int(key.metadata["size"]))
-        key.get_contents_to_filename(dest_path)
+        key.get_contents_to_filename(dest_path, cb=timing.progress, 
+            num_cb=timing.num_callbacks)
         timing.report()
         
         return key_name
-        
 
     def exists(self, relative_path):
         """Returns ``True`` if the file at ``relative_path`` exists. False 
@@ -584,13 +637,15 @@ class S3Endpoint(EndpointBase):
         mp = self.bucket.initiate_multipart_upload(key_name, 
             metadata=metadata)
         
+        timing = TransferTiming(self.log, fqn, source_meta["size"])
         chunk = None
         try:
             # Part numbers must start at 1self.
             for part, chunk in enumerate(self._chunk_file(source_path),1):
                 self.log.debug("Uploading part %(part)s with" % vars())
                 try:
-                    mp.upload_part_from_file(chunk, part)
+                    mp.upload_part_from_file(chunk, part, cb=timing.progress, 
+                        num_cb=timing.num_callbacks)
                 finally:
                     chunk.close()
         except (Exception):
@@ -623,7 +678,9 @@ class S3Endpoint(EndpointBase):
             source_meta["md5_base64"], 
             source_meta["size"]
         )
-        key.set_contents_from_filename(source_path, replace=False, md5=md5)
+        timing = TransferTiming(self.log, fqn, source_meta["size"])
+        key.set_contents_from_filename(source_path, replace=False, md5=md5, 
+            cb=timing, num_cb=timing.num_callbacks)
 
         self.log.debug("Finished single part upload of %(source_path)s to "\
             "%(fqn)s" % vars())
@@ -645,24 +702,4 @@ class S3Endpoint(EndpointBase):
                 chunk = f.read(chunk_bytes)                
         return
 
-    # def _free_memory_in_kb(self):
-    #     """Returns the free memory in KB as an int.
-    #     """
-    # 
-    #     if sys.platform == 'win32':
-    #         raise RuntimeError("Using the windows is not supported.")
-    #         
-    #     if 'linux' in sys.platform:
-    #         with open('/proc/meminfo', 'r') as f:
-    #             memlines = f.readlines()
-    # 
-    #         mem_info = {}
-    #         for line in memlines:
-    #             tokens = line.rstrip(' kB\n').split(':')
-    #             mem_info[tokens[0]] = int(tokens[1].strip())
-    # 
-    #         return mem_info.get("Cached", 0) + mem_info.get("MemFree", 0) + \
-    #             mem_info.get("Buffers", 0)
-    # 
-    #     if sys.platform == 'darwin':
             
