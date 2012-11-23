@@ -235,9 +235,9 @@ class SnapSubCommand(SubCommand):
         for worker in self.workers:
             worker.start()
         
-        if self.args.report_intervel_secs > 0:
+        if self.args.report_interval_secs > 0:
             reporter = SnapReporterThread(file_q, 
-                self.args.report_intervel_secs)
+                self.args.report_interval_secs)
             reporter.start()
         else:
             self.log.info("Progress reporting is disabled.")

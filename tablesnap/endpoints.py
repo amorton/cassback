@@ -156,7 +156,7 @@ class TransferTiming(object):
         
         path = self.path
         elapsed_ms = int(time.time() * 1000) - self.start_ms
-        throughput = ((progress * 1.0) / (1024**2)) / (elapsed_ms)
+        throughput = ((progress * 1.0) / (1024**2)) / (elapsed_ms or 1)
         
         if progress == total:
             pattern = "Transfered file {path} in {elapsed_ms:d} ms size "\
@@ -203,7 +203,7 @@ class LocalEndpoint(EndpointBase):
         group = main_parser.add_argument_group("local endpoint", 
             description="Configuration for the local endpoint.")
 
-        group.add_argument('--backup_base', default=None,
+        group.add_argument('--backup-base', default=None, dest="backup_base",
             help="Base destination path.")
 
         return group
@@ -228,7 +228,7 @@ class LocalEndpoint(EndpointBase):
         dest_meta_path = dest_path + self._META_SUFFIX
         with open(dest_meta_path, "w") as f:
             f.write(json.dumps(source_meta))
-        return
+        return dest_path
 
     def read_meta(self, relative_path):
 
