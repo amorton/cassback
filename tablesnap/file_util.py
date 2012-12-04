@@ -59,16 +59,14 @@ def file_meta(file_path):
 
 def ensure_dir(path):
     """Ensure the directories for ``path`` exist. 
-
-    ``path`` may be a file path or directory path. 
     """
 
     
     try:
-        os.makedirs(os.path.dirname(path))
+        os.makedirs(path)
     except (EnvironmentError) as e:
         if not(e.errno == errno.EEXIST and 
-            e.filename == os.path.dirname(path)):
+            e.filename == path):
             raise
     return
 

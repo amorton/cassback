@@ -14,6 +14,10 @@ DT_INPUT_FORMATS= [
 ]
 """Formats to accept as datetime input. """
 
+def now_iso():
+    """Get the current date/time formatted as ISO."""
+    return to_iso(datetime.datetime.now())
+    
 def to_iso(dt):
     """Convert the `dt` datetime to iso format. 
     """

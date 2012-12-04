@@ -12,10 +12,10 @@ SlurpSubCommand = tablesnap.subcommands:SlurpSubCommand
 PurgeSubCommand = tablesnap.subcommands:PurgeSubCommand
 ShowSubCommand = tablesnap.subcommands:ShowSubCommand
 
-
 [tablesnap.endpoints]
 LocalEndpoint = tablesnap.endpoints:LocalEndpoint
 S3Endpoint = tablesnap.endpoints:S3Endpoint
+SurveyEndpoint = tablesnap.endpoints:SurveyEndpoint
 """
 
 setup(
