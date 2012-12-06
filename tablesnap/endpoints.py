@@ -812,7 +812,7 @@ class SurveyEndpoint(EndpointBase):
         
         entries = []
         for root, dirs, files in os.walk(full_path):
-            relative_root = root.replace(self.args.backup_base, "")
+            relative_root = root.replace(self.args.meta_dir, "")
             if relative_root.startswith("/"):
                 relative_root = relative_root[1:]
             
@@ -843,19 +843,24 @@ class SurveyEndpoint(EndpointBase):
         
     def remove_file(self, relative_path):
         
-        src_meta = self.read_meta(relative_src_path)
-        msg = self.FILE_OP_PATTERN.format(time=dt_util.now_iso(), 
-            action="removed", src_path=relative_path, 
-            dest_path="na", 
-            bytes=src_meta["size"])
+        src_meta = self.read_meta(relative_path)
+        size = src_meta.get("size")
+        # If no size do not add to the survey, 
+        # it's probably not a file with meta data.
+        # e.g. we are deleting a manifest
+        if size is not None:
+            msg = self.FILE_OP_PATTERN.format(time=dt_util.now_iso(), 
+                action="removed", src_path=relative_path, 
+                dest_path="na", 
+                bytes=size)
             
-        self.log_file.write(msg)
-        self.log_file.flush()
+            self.log_file.write(msg)
+            self.log_file.flush()
         
         path = os.path.join(self.args.meta_dir, relative_path)
         os.remove(path)
         file_util.maybe_remove_dirs(os.path.dirname(path))
-        return full_path
+        return relative_path
 
     def remove_file_with_meta(self, relative_path):
         
