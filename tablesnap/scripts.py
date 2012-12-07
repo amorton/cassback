@@ -8,7 +8,7 @@ import traceback
 
 import pkg_resources
 
-import endpoints
+from endpoints import endpoints
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Sub Commands take the command line args and call the function to do the 
