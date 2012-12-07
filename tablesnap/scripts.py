@@ -8,7 +8,7 @@ import traceback
 
 import pkg_resources
 
-from endpoints import endpoints
+from tablesnap.endpoints import endpoints
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Sub Commands take the command line args and call the function to do the 
