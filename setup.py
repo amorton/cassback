@@ -24,7 +24,9 @@ setup(
     version='0.7.0',
     author='Jeremy Grosser',
     author_email='jeremy@synack.me',
-    packages = ["tablesnap",],
+    packages = ["tablesnap",
+                "tablesnap.endpoints", 
+                "tablesnap.subcommands"],
     install_requires=[
         'boto>=2.2',
         "watchdog>=0.6."
