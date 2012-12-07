@@ -1,0 +1,96 @@
+INFO:tablesnap.subcommands.backup_subcommand.BackupSubCommand:Starting sub command backup
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Refreshing existing files.
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Ignoring non Cassandra file /var/lib/cassandra/data/.DS_Store
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Ignoring non Cassandra file /var/lib/cassandra/data/Keyspace1/.DS_Store
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Ignoring non Cassandra file /var/lib/cassandra/data/Keyspace1/Standard1/.DS_Store
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Skipping file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Data.db skipping as there is a valid backup
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Skipping file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Digest.sha1 skipping as there is a valid backup
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Skipping file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Filter.db skipping as there is a valid backup
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Skipping file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Index.db skipping as there is a valid backup
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Skipping file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-5-Statistics.db skipping as there is a valid backup
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Data.db to hosts/aarons-MBP-2011.local/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Digest.sha1 to hosts/aarons-MBP-2011.local/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Filter.db to hosts/aarons-MBP-2011.local/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Index.db to hosts/aarons-MBP-2011.local/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Statistics.db to hosts/aarons-MBP-2011.local/Keyspace1/Standard1/Keyspace1-Standard1-hf-6-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Data.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Digest.sha1 to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Filter.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Index.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-1-Statistics.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Data.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-2-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Digest.sha1 to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-2-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Filter.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-2-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Index.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-2-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/LocationInfo/system-LocationInfo-hf-2-Statistics.db to hosts/aarons-MBP-2011.local/system/LocationInfo/system-LocationInfo-hf-2-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Data.db to hosts/aarons-MBP-2011.local/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Digest.sha1 to hosts/aarons-MBP-2011.local/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Filter.db to hosts/aarons-MBP-2011.local/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Index.db to hosts/aarons-MBP-2011.local/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Statistics.db to hosts/aarons-MBP-2011.local/system/schema_columnfamilies/system-schema_columnfamilies-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Data.db to hosts/aarons-MBP-2011.local/system/schema_keyspaces/system-schema_keyspaces-hf-1-Data.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Digest.sha1 to hosts/aarons-MBP-2011.local/system/schema_keyspaces/system-schema_keyspaces-hf-1-Digest.sha1
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Filter.db to hosts/aarons-MBP-2011.local/system/schema_keyspaces/system-schema_keyspaces-hf-1-Filter.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Index.db to hosts/aarons-MBP-2011.local/system/schema_keyspaces/system-schema_keyspaces-hf-1-Index.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Queueing file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploading file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.SnapWorkerThread:Uploaded file /var/lib/cassandra/data/system/schema_keyspaces/system-schema_keyspaces-hf-1-Statistics.db to hosts/aarons-MBP-2011.local/system/schema_keyspaces/system-schema_keyspaces-hf-1-Statistics.db
+INFO:tablesnap.subcommands.backup_subcommand.WatchdogWatcher:Watching for new file under /var/lib/cassandra/data.

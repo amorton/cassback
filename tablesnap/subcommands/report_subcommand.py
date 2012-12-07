@@ -52,10 +52,6 @@ class SurveyReportSubCommand(subcommands.SubCommand):
         sub_parser.add_argument("--extrapolate-to",
             dest='extrapolate_to', default="now",
             help="Date time to extrapolate usage to.")
-
-        sub_parser.add_argument("--show-extrapolations",
-            dest='show_extrapolations', default=False, action="store_true",
-            help="Show extrapolated hours in the report.")
             
         return sub_parser
 
@@ -116,10 +112,10 @@ class SurveyReportSubCommand(subcommands.SubCommand):
             ) / one_gb
             
             write("For Month {ym}.".format(ym=year_month))
-            write("Byte-Hours   : {byte_hours:>25,}".format(byte_hours=byte_hours))
-            write("GB-Months    : {gb_months:>25,.2}".format(gb_months=gb_months))
-            write("GB Trans in  : {trans_in_gb:>25,.2}".format(trans_in_gb=trans_in_gb))
-            write("GB Trans out : {trans_out_gb:>25,.2}".format(trans_out_gb=trans_out_gb))
+            write("Byte-Hours   : {byte_hours:>25}".format(byte_hours=byte_hours))
+            write("GB-Months    : {gb_months:>25.2}".format(gb_months=gb_months))
+            write("GB Trans in  : {trans_in_gb:>25.2}".format(trans_in_gb=trans_in_gb))
+            write("GB Trans out : {trans_out_gb:>25.2}".format(trans_out_gb=trans_out_gb))
                 
         return (0, "\n".join(str_builder))
 
