@@ -309,10 +309,10 @@ class S3Endpoint(endpoints.EndpointBase):
         self.log.debug("Starting multi part upload of %(source_path)s to "\
             "%(fqn)s" % vars())
         # All meta tags must be strings
-        metadata = {
-            k : str(v)
+        metadata = dict(
+            (k , str(v))
             for k,v in source_meta.iteritems() 
-        }
+        )
         mp = self.bucket.initiate_multipart_upload(key_name, 
             metadata=metadata)
         
