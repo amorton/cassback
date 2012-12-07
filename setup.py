@@ -21,7 +21,7 @@ SurveyEndpoint = tablesnap.endpoints.survey_endpoint:SurveyEndpoint
 
 setup(
     name='tablesnap',
-    version='0.7.1',
+    version='0.7.2',
     author='Jeremy Grosser',
     author_email='jeremy@synack.me',
     packages = ["tablesnap",

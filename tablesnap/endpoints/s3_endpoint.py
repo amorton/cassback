@@ -346,10 +346,10 @@ class S3Endpoint(endpoints.EndpointBase):
         key = self.bucket.new_key(key_name)
         
         # All meta data fields have to be strings.
-        key.update_metadata({
-            k : str(v)
+        key.update_metadata(dict(
+            (k , str(v))
             for k, v in source_meta.iteritems()
-        })
+        ))
         
         # Rebuild the MD5 tuple boto makes
         md5 = (
