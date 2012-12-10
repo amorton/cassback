@@ -89,6 +89,9 @@ class SurveyReportSubCommand(subcommands.SubCommand):
         month_key = lambda x : "{start.year}-{start.month}".format(
             start=x.start)
         for year_month, month_hours in itertools.groupby(hours, month_key):
+            # It's an iterator
+            month_hours = list(month_hours)
+            
             # byte hours is max bytes for each hour
             byte_hours = sum(
                 h.max_bytes
@@ -105,7 +108,7 @@ class SurveyReportSubCommand(subcommands.SubCommand):
                 h.trans_in
                 for h in month_hours
             ) / one_gb
-        
+
             trans_out_gb = sum (
                 h.trans_out
                 for h in month_hours
