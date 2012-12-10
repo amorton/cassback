@@ -52,6 +52,10 @@ class SurveyReportSubCommand(subcommands.SubCommand):
         sub_parser.add_argument("--extrapolate-to",
             dest='extrapolate_to', default="now",
             help="Date time to extrapolate usage to.")
+
+        sub_parser.add_argument("--show-extrapolations",
+            dest="show_extrapolations", default=False, action="store_true",
+            help="Show extrapolated usage in the report.")
             
         return sub_parser
 
@@ -80,7 +84,8 @@ class SurveyReportSubCommand(subcommands.SubCommand):
         write(pattern.format(h=HourSummaryHeader))
         
         for hour in hours:
-            write(pattern.format(h=hour))
+            if hour.activity or self.args.show_extrapolations:
+                write(pattern.format(h=hour))
 
         write("")
         write("Usage summary")
