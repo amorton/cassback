@@ -94,5 +94,6 @@ class ListSubCommand(subcommands.SubCommand):
                 backup_name)
             if manifest.host == host:
                 host_manifests.append(file_name)
+        host_manifests.sort()
         return host_manifests
 
