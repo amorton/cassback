@@ -260,21 +260,22 @@ class S3Endpoint(endpoints.EndpointBase):
                         yield sub_entry
         return list(_walk_keys(key_name))
     
-    def remove_file(self, relative_path):
+    def remove_file(self, relative_path, dry_run=False):
         """Removes the file at the ``relative_path``. 
         
-        Returns the fill path to the file in the backup."""
+        Returns the full path to the file in the backup."""
         
         key_name = relative_path
         bucket_name = self.args.bucket_name
         
+        if dry_run:
+            return key_name
+            
         self.log.debug("Starting to delete key %(key_name)s in "\
             "%(bucket_name)s" % vars())
         
         key = self.bucket.get_key(key_name)
         assert key is not None, "Cannot delete missing key %s" % key_name
-        # if key is None:
-            # self.log.debug("Key %(key_name)s was already deleted." % vars())
             
         key.delete()
 
@@ -282,14 +283,14 @@ class S3Endpoint(endpoints.EndpointBase):
             "%(bucket_name)s" % vars())
         return key_name
 
-    def remove_file_with_meta(self, relative_path):
+    def remove_file_with_meta(self, relative_path, dry_run=False):
         """Removes the file at the ``relative_path`` that is expected to 
         have meta data. 
         
         Returns the fill path to the file in the backup."""
         
         # In S3 the meta is stored with the key. 
-        return self.remove_file(relative_path)
+        return self.remove_file(relative_path, dry_run=dry_run)
         
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

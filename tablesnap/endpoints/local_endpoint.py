@@ -153,22 +153,26 @@ class LocalEndpoint(endpoints.EndpointBase):
                 return entries
         return entries
         
-    def remove_file(self, relative_path):
+    def remove_file(self, relative_path, dry_run=False):
         
         full_path = os.path.join(self.args.backup_base, relative_path)
-
+        
+        if dry_run:
+            return full_path
+            
         os.remove(full_path)
         file_util.maybe_remove_dirs(os.path.dirname(full_path))
         return full_path
 
-    def remove_file_with_meta(self, relative_path):
+    def remove_file_with_meta(self, relative_path, dry_run=False):
         
         # always try to delete meta data
-        meta_path = relative_path + self._META_SUFFIX
-        try:
-            self.remove_file(meta_path)
-        except (EnvironmentError) as e:
-            if not (e.errno == errno.ENOENT):
-                raise
-        return self.remove_file(relative_path)
+        if not dry_run:
+            meta_path = relative_path + self._META_SUFFIX
+            try:
+                self.remove_file(meta_path)
+            except (EnvironmentError) as e:
+                if not (e.errno == errno.ENOENT):
+                    raise
+        return self.remove_file(relative_path, dry_run=dry_run)
 

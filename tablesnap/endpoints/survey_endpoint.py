@@ -162,10 +162,15 @@ class SurveyEndpoint(endpoints.EndpointBase):
                 return entries
         return entries
         
-    def remove_file(self, relative_path):
+    def remove_file(self, relative_path, dry_run=False):
         
+        path = os.path.join(self.args.meta_dir, relative_path)
         src_meta = self.read_meta(relative_path)
         size = src_meta.get("size")
+        
+        if dry_run:
+            return path
+            
         # If no size do not add to the survey, 
         # it's probably not a file with meta data.
         # e.g. we are deleting a manifest
@@ -178,14 +183,13 @@ class SurveyEndpoint(endpoints.EndpointBase):
             self.log_file.write(msg)
             self.log_file.flush()
         
-        path = os.path.join(self.args.meta_dir, relative_path)
         os.remove(path)
         file_util.maybe_remove_dirs(os.path.dirname(path))
         return relative_path
 
-    def remove_file_with_meta(self, relative_path):
+    def remove_file_with_meta(self, relative_path, dry_run=False):
         
-        return self.remove_file(relative_path)
+        return self.remove_file(relative_path, dry_run=dry_run)
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # 

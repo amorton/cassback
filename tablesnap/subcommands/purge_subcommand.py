@@ -15,6 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
+import datetime
 import logging
 import os.path
 import socket
@@ -48,23 +50,41 @@ class PurgeSubCommand(subcommands.SubCommand):
         sub_parser.add_argument("--host",  
             help="Host to purge backups from, defaults to this host.")
 
-        sub_parser.add_argument("--purge-before",
+        sub_parser.add_argument("--dry-run", dest="dry_run", default=False,
+            action="store_true",
+            help="Do not delete any files.")
+        
+        purge_group = sub_parser.add_mutually_exclusive_group(required=True)
+        purge_group.add_argument("--purge-before",
             dest='purge_before',
             help="Purge backups older than this date time.")
-
+        purge_group.add_argument("--keep-days",
+            dest='keep_days', type=int, 
+            help="Number of days of backups to keep.")
+            
         return sub_parser
 
     def __init__(self, args):
         self.args = args
-
+        self._validate_args()
+        
+    def _validate_args(self):
+        
+        if self.args.keep_days is not None and self.args.keep_days < 1:
+            raise argparse.ArgumentError(None, "keep_days must "\
+                "be greater than 0. Use the --all option to purge all "\
+                "backups.")
+        return
+        
     def __call__(self):
         
         
+        endpoint = self._endpoint(self.args)
         keyspaces = self.args.keyspace
         host = self.args.host or socket.getfqdn()
-        purge_before = dt_util.parse_date_input(self.args.purge_before)
-        
-        endpoint = self._endpoint(self.args)
+        purge_before = self._calc_purge_before()
+        self.log.info("Purging backups older than: %(purge_before)s", 
+            {"purge_before" : purge_before})
         
         # Step 1- get all the manifests
         self.log.debug("Building list of manifests.")
@@ -99,14 +119,31 @@ class PurgeSubCommand(subcommands.SubCommand):
         deleted_files.extend(self._purge_sstables(endpoint, keyspaces, host, 
             kept_files))
 
-        buffer = ["Deleted files:", ""]
-        if deleted_files:
-            buffer.extend(deleted_files)
+        str_build = ["Purge backups before {purge_before}".format(
+            purge_before=dt_util.to_iso(purge_before))
+        ]
+        if self.args.dry_run:
+            str_build.append("DRY RUN: no files deleted, candidate files:")
         else:
-            buffer.append("No files")
+            str_build.append("Deleted files:")
+        str_build.append("")
+        
+        if deleted_files:
+            str_build.extend(deleted_files)
+        else:
+            str_build.append("No files")
 
-        return (0, "\n".join(buffer))
+        return (0, "\n".join(str_build))
 
+    def _calc_purge_before(self):
+        """Calculates time after which manifests should be purged."""
+        
+        if self.args.purge_before:
+            return dt_util.parse_date_input(self.args.purge_before)
+        
+        assert self.args.keep_days > 0
+        return dt_util.now() - datetime.timedelta(self.args.keep_days)
+        
     def _all_manifests(self, endpoint, keyspaces, host):
         """Loads all manifests for the ``keyspaces`` and ``host``.
         """
@@ -153,7 +190,8 @@ class PurgeSubCommand(subcommands.SubCommand):
         for manifest in purged_manifests:
             path = manifest.backup_path
             self.log.info("Purging manifest file %(path)s" % vars())
-            deleted.append(endpoint.remove_file(path))
+            deleted.append(endpoint.remove_file(path, 
+                dry_run=self.args.dry_run))
         return deleted
 
     def _purge_sstables(self, endpoint, keyspaces, host, kept_files):
@@ -190,6 +228,6 @@ class PurgeSubCommand(subcommands.SubCommand):
                 else:
                     self.log.debug("Deleting file %(file_path)s" % vars())
                     deleted_files.append(endpoint.remove_file_with_meta(
-                        file_path))
+                        file_path, dry_run=self.args.dry_run))
 
         return deleted_files

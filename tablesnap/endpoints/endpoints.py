@@ -126,15 +126,19 @@ class EndpointBase(object):
         include_dirs=False, recursive=False):
         raise NotImplementedError()
     
-    def remove_file(self, relative_path):
+    def remove_file(self, relative_path, dry_run=False):
         """Removes the file at the ``relative_path``. 
+        
+        If ``dry_run`` the file is not deleted. 
         
         Returns the fill path to the file in the backup."""
         raise NotImplementedError()
 
-    def remove_file_with_meta(self, relative_path):
+    def remove_file_with_meta(self, relative_path, dry_run):
         """Removes the file at the ``relative_path`` that is expected to 
         have meta data. 
+        
+        If ``dry_run`` the file is not deleted. 
         
         Returns the fill path to the file in the backup."""
         raise NotImplementedError()
