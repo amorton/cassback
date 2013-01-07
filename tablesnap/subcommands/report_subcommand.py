@@ -122,8 +122,8 @@ class SurveyReportSubCommand(subcommands.SubCommand):
             write("For Month {ym}.".format(ym=year_month))
             write("Byte-Hours   : {byte_hours:>25}".format(byte_hours=byte_hours))
             write("GB-Months    : {gb_months:>25.2}".format(gb_months=gb_months))
-            write("GB Trans in  : {trans_in_gb:>25.2}".format(trans_in_gb=trans_in_gb))
-            write("GB Trans out : {trans_out_gb:>25.2}".format(trans_out_gb=trans_out_gb))
+            write("GB Trans in  : {trans_in_gb:>25.2f}".format(trans_in_gb=trans_in_gb))
+            write("GB Trans out : {trans_out_gb:>25.2f}".format(trans_out_gb=trans_out_gb))
                 
         return (0, "\n".join(str_builder))
 
