@@ -159,7 +159,7 @@ class TransferTiming(object):
             (10 * mb, 1),   # 10MB, 1
             (100 * mb, 2),  # 100MB, 2
             (1024 * mb, 5), # 1GB , 5
-            (10 * 1024 * mb, ), # 10GB , 10
+            (10 * 1024 * mb, 10), # 10GB , 10
         ]
         
         self.num_callbacks = 20
