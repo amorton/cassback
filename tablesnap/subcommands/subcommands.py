@@ -87,19 +87,33 @@ class SubCommand(object):
         """Creates an endpoint from the command args."""
         return endpoints.create_from_args(args)
         
-    def _list_manifests(self, endpoint, keyspace, host, day):
-        """List all the manifests available for the ``keyspace`` and 
+    def _list_manifests(self, endpoint, keyspace, host, day, 
+        load_file_list=True):
+        """List all the manifests names available for the ``keyspace`` and 
         ``host`` for the datetime ``day`` using the ``endpoint``.
         
-        Returns a sorted list of the file names.
+        Returns a sorted list of the manifests.
         """
         
-        manifest_dir = cassandra.KeyspaceManifest.backup_dir(keyspace, host, 
+        manifest_dir = cassandra.KeyspaceManifest.backup_day_dir(keyspace, host, 
             day) 
-        host_manifests = list(endpoint.iter_dir(manifest_dir))
-        host_manifests.sort()
-
-        return host_manifests
+        
+        # Create a manifest from the file name that does not have the
+        # full file list.
+        manifests = [
+            cassandra.KeyspaceManifest.from_backup_path(file_name)
+            for file_name in endpoint.iter_dir(manifest_dir)
+        ]
+        manifests.sort(key=lambda x:x.timestamp)
+        
+        if load_file_list:
+            # we want the list of files in the manifests.
+            return [
+                self._load_manifest(endpoint, m.backup_name)
+                for m in manifests
+            ]
+        # OK to return empty manifests
+        return manifests
         
     def _load_manifest(self, endpoint, backup_name):
         """Load the :cls:`cassandra.KeyspaceManifest` for the 

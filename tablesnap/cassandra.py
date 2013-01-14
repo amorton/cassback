@@ -226,7 +226,19 @@ class CassandraFile(object):
             self.descriptor.generation, 
             self.component
         )
+        
+    @classmethod
+    def backup_keyspace_dir(self, host, keyspace):
+        """Gets the directory to that contains backups for the specified 
+        ``host`` and ``keyspace``. 
+        """
 
+        return os.path.join(*(
+            "hosts",
+            host,
+            keyspace
+        ))
+        
     @property
     def backup_path(self):
         """Gets the relative path to backup this file to. 
@@ -349,15 +361,33 @@ class KeyspaceManifest(object):
         return cls(keyspace, host_name, backup_name, timestamp, None)
 
     @classmethod
+    def from_backup_path(cls, backup_path):
+        _, local = os.path.split(backup_path)
+        backup_name, _ = os.path.splitext(backup_path)
+        return cls.from_backup_name(backup_name)
+        
+    @classmethod
     def from_manifest(cls, manifest):
 
         return cls(manifest["keyspace"], manifest["host"], 
             manifest["name"], dt_util.from_iso(manifest["timestamp"]), 
             manifest["column_families"])
 
-
     @classmethod
-    def backup_dir(cls, keyspace, host, day):
+    def backup_keyspace_dir(cls, keyspace):
+        """Returns the backup dir used for the ``keyspace``.
+        
+        Manifests are not stored in this path, they are in 
+        :attr:`backup_day_dir`
+        """
+        
+        return os.path.join(*(
+            "cluster",
+            keyspace
+        ))
+        
+    @classmethod
+    def backup_day_dir(cls, keyspace, host, day):
         """Returns the backup dir used to store manifests for the 
         ``keyspace`` and ``host`` on the datetime ``day``"""
         
@@ -375,7 +405,7 @@ class KeyspaceManifest(object):
     def backup_path(self):
         """Gets the relative path to backup the keyspace manifest to."""
 
-        return os.path.join(self.backup_dir(self.keyspace, self.host, 
+        return os.path.join(self.backup_day_dir(self.keyspace, self.host, 
             self.timestamp), "%s.json" % (self.backup_name,))
 
     def to_manifest(self):

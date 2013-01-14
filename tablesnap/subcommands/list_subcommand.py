@@ -69,11 +69,10 @@ class ListSubCommand(subcommands.SubCommand):
         
         endpoint = self._endpoint(self.args)
         manifests = self._list_manifests(endpoint, self.args.keyspace,
-            self.args.host, self.args.day)
+            self.args.host, self.args.day, load_file_list=False)
             
         if not self.args.list_all and manifests:
-            manifests = [max(manifests),]
-        
+            manifests = [max(manifests, key=lambda x:x.timestamp),]
         
         msg = "{prefix} for keyspace {keyspace} from {host} for {day}:".format(
             prefix="All backups" if self.args.list_all else "Latest backup", 
@@ -82,9 +81,10 @@ class ListSubCommand(subcommands.SubCommand):
         buffer = [msg]
         
         if manifests:
-            for file_name in manifests:
-                name, _ = os.path.splitext(file_name)
-                buffer.append(name)
+            buffer.extend(
+                manifest.backup_name 
+                for manifest in manifests
+            )
         else:
             buffer.append("None")
             

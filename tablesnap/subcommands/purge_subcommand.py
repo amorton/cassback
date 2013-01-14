@@ -25,10 +25,10 @@ from tablesnap import cassandra, dt_util
 from tablesnap.subcommands import subcommands
 
 # ============================================================================
-# Purge - remove files from the backup
+# 
 
 class PurgeSubCommand(subcommands.SubCommand):
-    """
+    """Purge command to remove files from the backup
     """
 
     log = logging.getLogger("%s.%s" % (__name__, "PurgeSubCommand"))
@@ -53,7 +53,7 @@ class PurgeSubCommand(subcommands.SubCommand):
         purge_group = sub_parser.add_mutually_exclusive_group(required=True)
         purge_group.add_argument("--purge-before",
             dest='purge_before',
-            help="Purge backups older than this date time.")
+            help="Purge backups older than this ISO date time.")
         purge_group.add_argument("--keep-days",
             dest='keep_days', type=int, 
             help="Number of days of backups to keep.")
@@ -75,48 +75,49 @@ class PurgeSubCommand(subcommands.SubCommand):
         return
         
     def __call__(self):
-        
+        """Implements the command."""
         
         endpoint = self._endpoint(self.args)
         
+        # Work out which days we want to keep 
+        # the exact cut off time for backups to keep
         purge_before = self._calc_purge_before()
-        self.log.info("Purging backups older than: {purge_before}".format( 
-            purge_before=purge_before))
+        # list of full or partial days to keep
+        manifest_days = self._manifest_days(purge_before)
+        self.log.info("To purge backups older then {purge_before} will read "\
+            " manifests from {manifest_days}".format(
+            purge_before=purge_before, manifest_days=manifest_days))
         
-        # Step 1- get all the manifests to be kept. 
-        self.log.debug("Building list of manifests.")
         
-        all_manifests = self._all_manifests(endpoint, self.args.keyspace, 
-            self.args.host)
-        self.log.info("Candiate manifest count: %s" % (len(all_manifests)))
+        # Read the manifests we want to keep. 
+        self.log.debug("Reading manifests after {purge_before} to "\
+            "keep.".format(purge_before=purge_before))
+        manifests = []
+        for manifest_day in manifest_days:
+            for manifest in self._list_manifests(endpoint, 
+                self.args.keyspace, self.args.host, manifest_day):
+                
+                if manifest.timestamp >= purge_before:
+                    manifests.append(manifest)
+                else:
+                    self.log.debug("Will not keep manifest {manifest}".format(
+                        manifest=manifest))
+        self.log.info("Keeping backups {manifests}".format(manifests=manifests))
         
-        # Step 2 - work out which manifests are staying and which are being 
-        # purged
-        kept_manifests = []
-        purged_manifests = []
 
-        for manifest in all_manifests:
-            if manifest.timestamp < purge_before:
-                purged_manifests.append(manifest)
-            else:
-                kept_manifests.append(manifest)
-        self.log.info("Will purge %s backups and keep %s" % (
-            len(purged_manifests), len(kept_manifests)))
-
-        # Step 3 - build a set of the files we want to keep. 
-        # We do this even if there are no purged manifests. A we could be 
-        # cleaning up after a failed purge.
+        # Build a set of the files we want to keep. 
+        # We purge everything else so that a failed purge can be fixed.
         kept_files = set()
-        for manifest in kept_manifests:
+        for manifest in manifests:
             kept_files.update(manifest.yield_file_names())
-        self.log.info("Keeping %s sstable files." % (len(kept_files)))
+        self.log.info("Keeping sstable files: {kept_files}".format(
+            kept_files=kept_files))
 
         # Step 4 - Purge the manifests
-        deleted_files = self._purge_manifests(endpoint, purged_manifests)
+        deleted_files = self._purge_manifests(endpoint, manifests)
 
         # Step 5 - Purge the files that are not referenced from a manifest.
-        deleted_files.extend(self._purge_sstables(endpoint, keyspaces, host, 
-            kept_files))
+        deleted_files.extend(self._purge_sstables(endpoint, kept_files))
 
         str_build = ["Purge backups before {purge_before}".format(
             purge_before=dt_util.to_iso(purge_before))
@@ -135,11 +136,12 @@ class PurgeSubCommand(subcommands.SubCommand):
         return (0, "\n".join(str_build))
         
     def _manifest_days(self, purge_before):
-        """Returns a list of backup days to read.
+        """Returns a list of backup days we want to read the manifest for. 
+        These are the days we potentially want to keep.
         
-        These are the days we want to keep things from.
         """
         
+        # Normalise the purge_before to be a whole day. 
         from_day = datetime.datetime(purge_before.year, purge_before.month, 
             purge_before.day)
         now = dt_util.now()
@@ -159,58 +161,59 @@ class PurgeSubCommand(subcommands.SubCommand):
         if self.args.purge_before:
             return dt_util.parse_date_input(self.args.purge_before)
         
-        assert self.args.keep_days > 0
+        assert (self.args.keep_days or -1) > 0
         return dt_util.now() - datetime.timedelta(self.args.keep_days)
 
-    def _purge_manifests(self, endpoint,  purged_manifests):
-        """Deletes the :cls:`cassandra.KeyspaceManifest` manifests 
-        in ``purged_manifests``.
+    def _purge_manifests(self, endpoint,  keep_manifests):
+        """Deletes all manifests for the current keyspace and host not in 
+        the list of ``kept_manifests``
         
         Returns a list of the paths deleted. 
         """
         
+        keep_paths = frozenset(
+            manifest.backup_path
+            for manifest in keep_manifests
+        )
+        self.log.debug("Keeping manifsest paths {keep_paths}".format(
+            keep_paths=keep_paths))
+                    
+        keyspace_dir = cassandra.KeyspaceManifest.backup_keyspace_dir(
+            self.args.keyspace)
         deleted = []
-        for manifest in purged_manifests:
-            path = manifest.backup_path
-            self.log.info("Purging manifest file %(path)s" % vars())
-            deleted.append(endpoint.remove_file(path, 
+        for manifest_path in endpoint.iter_dir(keyspace_dir, recursive=True):
+            if manifest_path in keep_paths:
+                continue 
+                
+            self.log.debug("Purging manifest file {manifest_path}".format(
+                manifest_path=manifest_path))
+            deleted.append(endpoint.remove_file(manifest_path, 
                 dry_run=self.args.dry_run))
         return deleted
 
-    def _purge_sstables(self, endpoint, keyspaces, host, kept_files):
-        """Deletes the sstables for in the ``keyspaces`` for the ``host``
+    def _purge_sstables(self, endpoint, kept_files):
+        """Deletes the sstables for the current keyspace and host
         that are not listed in ``kept_files``. 
-        
-        If ``keyspaces`` is empty purge from all keyspaces.
         
         Returns a list of the paths deleted.
         """
         
-        # Step 1 - work out the keyspace directores we want to delete from.
-        if keyspaces:
-            ks_dirs = [
-                os.path.join("hosts", host, ks_name)
-                for ks_name in keyspaces
-            ]
-        else:
-            host_dir = os.path.join("hosts", host)
-            ks_dirs = list(
-                os.path.join(host_dir, d)
-                for d in endpoint.iter_dir(host_dir, include_files=False, 
-                    include_dirs=True)
-            )
-
+        ks_dir = cassandra.CassandraFile.backup_keyspace_dir(self.args.host, 
+            self.args.keyspace)
+        
+        set_kept_files = frozenset(kept_files)
+        
         # Step 3 - delete files not in the keep list.
         deleted_files = []
-        for ks_dir in ks_dirs:
-            for file_path in endpoint.iter_dir(ks_dir, recursive=True):
-                _, file_name = os.path.split(file_path)
-
-                if file_name in kept_files:
-                    self.log.debug("Keeping file %(file_path)s" % vars())
-                else:
-                    self.log.debug("Deleting file %(file_path)s" % vars())
-                    deleted_files.append(endpoint.remove_file_with_meta(
-                        file_path, dry_run=self.args.dry_run))
-
+        for file_path in endpoint.iter_dir(ks_dir, recursive=True):
+            _, file_name = os.path.split(file_path)
+            
+            if file_name in set_kept_files:
+                self.log.debug("Keeping file {file_path}".format(
+                    file_path=file_path))
+            else:
+                self.log.debug("Deleting file {file_path}".format(
+                    file_path=file_path))
+                deleted_files.append(endpoint.remove_file_with_meta(
+                    file_path, dry_run=self.args.dry_run))
         return deleted_files
