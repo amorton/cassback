@@ -212,12 +212,12 @@ class S3Endpoint(endpoints.EndpointBase):
         
         if hash_match:
             self.log.debug("Backup file {key_name} matches expected md5 "\
-                "{expected_hash}".format(path=path, 
+                "{expected_hash}".format(key_name=key_name, 
                 expected_hash=expected_hash))
             return True
             
         self.log.warn("Backup file {key_name} does not match expected md5 "\
-            "{expected_hash}, got {current_md5}".format(path=path, 
+            "{expected_hash}, got {current_md5}".format(key_name=key_name, 
             expected_hash=expected_hash, current_md5=key_md5 or key_etag))
         return False
 
