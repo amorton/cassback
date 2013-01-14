@@ -43,13 +43,9 @@ class PurgeSubCommand(subcommands.SubCommand):
         """
         sub_parser = super(PurgeSubCommand, cls).add_sub_parser(sub_parsers)
 
-        sub_parser.add_argument("--keyspace", nargs="+",
-            help="Keyspace to purge from, if not specified all keyspaces "\
-            "are purged.")
-
         sub_parser.add_argument("--host",  
+            default=socket.getfqdn(),
             help="Host to purge backups from, defaults to this host.")
-
         sub_parser.add_argument("--dry-run", dest="dry_run", default=False,
             action="store_true",
             help="Do not delete any files.")
@@ -61,6 +57,9 @@ class PurgeSubCommand(subcommands.SubCommand):
         purge_group.add_argument("--keep-days",
             dest='keep_days', type=int, 
             help="Number of days of backups to keep.")
+
+        sub_parser.add_argument("keyspace",
+            help="Keyspace to purge from.")
             
         return sub_parser
 
@@ -72,23 +71,23 @@ class PurgeSubCommand(subcommands.SubCommand):
         
         if self.args.keep_days is not None and self.args.keep_days < 1:
             raise argparse.ArgumentError(None, "keep_days must "\
-                "be greater than 0. Use the --all option to purge all "\
-                "backups.")
+                "be greater than 0. ")
         return
         
     def __call__(self):
         
         
         endpoint = self._endpoint(self.args)
-        keyspaces = self.args.keyspace
-        host = self.args.host or socket.getfqdn()
-        purge_before = self._calc_purge_before()
-        self.log.info("Purging backups older than: %(purge_before)s", 
-            {"purge_before" : purge_before})
         
-        # Step 1- get all the manifests
+        purge_before = self._calc_purge_before()
+        self.log.info("Purging backups older than: {purge_before}".format( 
+            purge_before=purge_before))
+        
+        # Step 1- get all the manifests to be kept. 
         self.log.debug("Building list of manifests.")
-        all_manifests = self._all_manifests(endpoint, keyspaces, host)
+        
+        all_manifests = self._all_manifests(endpoint, self.args.keyspace, 
+            self.args.host)
         self.log.info("Candiate manifest count: %s" % (len(all_manifests)))
         
         # Step 2 - work out which manifests are staying and which are being 
@@ -134,7 +133,26 @@ class PurgeSubCommand(subcommands.SubCommand):
             str_build.append("No files")
 
         return (0, "\n".join(str_build))
-
+        
+    def _manifest_days(self, purge_before):
+        """Returns a list of backup days to read.
+        
+        These are the days we want to keep things from.
+        """
+        
+        from_day = datetime.datetime(purge_before.year, purge_before.month, 
+            purge_before.day)
+        now = dt_util.now()
+        to_day = datetime.datetime(now.year, now.month, now.day)
+        
+        assert from_day <= to_day
+        diff = to_day - from_day
+        
+        return [
+            from_day + datetime.timedelta(d)
+            for d in range(diff.days + 1)
+        ]
+        
     def _calc_purge_before(self):
         """Calculates time after which manifests should be purged."""
         
@@ -143,41 +161,6 @@ class PurgeSubCommand(subcommands.SubCommand):
         
         assert self.args.keep_days > 0
         return dt_util.now() - datetime.timedelta(self.args.keep_days)
-        
-    def _all_manifests(self, endpoint, keyspaces, host):
-        """Loads all manifests for the ``keyspaces`` and ``host``.
-        """
-        
-        # Step 1 - get the keyspace dirs
-        # if keyspace arg is empty then get all. 
-        if keyspaces:
-            ks_dirs = [
-                os.path.join("cluster", ks_name)
-                for ks_name in keyspaces
-            ]
-        else:
-            ks_dirs = list(
-                os.path.join("cluster", d)
-                for d in endpoint.iter_dir("cluster", include_files=False, 
-                    include_dirs=True)
-            )
-            
-        # Step 2 - Load the manifests
-        manifests = []
-        for ks_dir in ks_dirs:
-            for manifest_file_name in endpoint.iter_dir(ks_dir):
-                # Just load the manifest and check the host
-                # could be better. 
-                self.log.debug("Opening manifest file %(manifest_file_name)s"\
-                    % vars())
-
-                manifest = cassandra.KeyspaceManifest.from_manifest(
-                    endpoint.read_json(os.path.join(ks_dir, 
-                    manifest_file_name)))
-
-                if manifest.host == host:
-                    manifests.append(manifest)
-        return manifests
 
     def _purge_manifests(self, endpoint,  purged_manifests):
         """Deletes the :cls:`cassandra.KeyspaceManifest` manifests 

@@ -65,21 +65,23 @@ class ValidateSubCommand(subcommands.SubCommand):
 
         for file_name in manifest.yield_file_names():
             
-            # Model the file in the manifest.
             cass_file = cassandra.CassandraFile.from_file_path(file_name, 
                 meta={}, host=manifest.host)
-
+                
+            # Get the stored meta data for the file
             try:
                 cass_file.meta = endpoint.read_meta(cass_file.backup_path)
             except (EnvironmentError) as e:
                 if e.errno != errno.ENOENT:
                     raise
-                # missing file is ok. 
+                # Set null so we know the meta was not found
                 cass_file = None    
 
             if cass_file is None:
+                # Could not find the meta.
                 missing_files.append(file_name)
             elif endpoint.exists(cass_file.backup_path):
+                # Found the meta, and the file actually exists.
                 if not self.args.checksum:
                     present_files.append(file_name)
                 elif endpoint.validate_checksum(cass_file.backup_path, 

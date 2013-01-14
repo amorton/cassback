@@ -281,6 +281,7 @@ class KeyspaceManifest(object):
     def __init__(self, keyspace, host, backup_name, timestamp, 
         column_families):
         
+        
         self.keyspace = keyspace
         self.host = host
         self.backup_name = backup_name
@@ -291,9 +292,11 @@ class KeyspaceManifest(object):
     def from_cass_file(cls, cass_file):
         """Create a manifest of the SSTables in a keyspace. 
 
-        
+        *Note:* This function gets the current time which is later used as 
+        a unique value. It should not be called from multiple threads. 
         """
-
+        
+        # TODO: Handle timezones
         timestamp = datetime.datetime.now()
         safe_ts = _to_safe_datetime_fmt(timestamp)
 
@@ -342,7 +345,7 @@ class KeyspaceManifest(object):
         assert not tokens
 
         # expecting 2012_10_22T14_26_57_871835 for the safe TS. 
-        timestamp = _from_safe_datetime_fmt(safe_ts).isoformat()
+        timestamp = _from_safe_datetime_fmt(safe_ts)
         return cls(keyspace, host_name, backup_name, timestamp, None)
 
     @classmethod
@@ -354,18 +357,26 @@ class KeyspaceManifest(object):
 
 
     @classmethod
-    def backup_dir(cls, keyspace):
-        return os.path.join(*("cluster", keyspace))
-
+    def backup_dir(cls, keyspace, host, day):
+        """Returns the backup dir used to store manifests for the 
+        ``keyspace`` and ``host`` on the datetime ``day``"""
+        
+        
+        return os.path.join(*(
+            "cluster",
+            keyspace,
+            str(day.year),
+            str(day.month),
+            str(day.day),
+            host
+        ))
+        
     @property
     def backup_path(self):
         """Gets the relative path to backup the keyspace manifest to."""
 
-        return os.path.join(*(
-            "cluster",
-            self.keyspace,
-            "%s.json" % (self.backup_name,)
-        ))
+        return os.path.join(self.backup_dir(self.keyspace, self.host, 
+            self.timestamp), "%s.json" % (self.backup_name,))
 
     def to_manifest(self):
         return {

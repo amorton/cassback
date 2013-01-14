@@ -19,7 +19,7 @@ import logging
 import socket
 import os.path
 
-from tablesnap import cassandra
+from tablesnap import cassandra, dt_util
 from tablesnap.subcommands import subcommands
 
 # ============================================================================
@@ -45,8 +45,12 @@ class ListSubCommand(subcommands.SubCommand):
         sub_parser.add_argument('--all', 
             action='store_true', dest='list_all', default=False,
             help="List all backups that match the criteria. Otherwise only "\
-            "the most recent backup is listed.")
+            "the most recent backup for the specified day is listed.")
 
+        sub_parser.add_argument('--day', 
+            default=dt_util.now_iso(), 
+            help="Day to return list the backups from.")
+            
         sub_parser.add_argument("keyspace",
             help="Keyspace to list backups from.")
         sub_parser.add_argument('--host',
@@ -57,21 +61,25 @@ class ListSubCommand(subcommands.SubCommand):
 
     def __init__(self, args):
         self.args = args
-
+        self.args.day = dt_util.parse_date_input(self.args.day)
+        
     def __call__(self):
 
         self.log.info("Starting sub command %s" % self.command_name)
         
         endpoint = self._endpoint(self.args)
         manifests = self._list_manifests(endpoint, self.args.keyspace,
-            self.args.host)
+            self.args.host, self.args.day)
             
         if not self.args.list_all and manifests:
             manifests = [max(manifests),]
         
-        buffer = [("All backups" if self.args.list_all else "Latest backup")\
-            + " for keyspace %(keyspace)s from %(host)s:" % vars(
-            self.args)]
+        
+        msg = "{prefix} for keyspace {keyspace} from {host} for {day}:".format(
+            prefix="All backups" if self.args.list_all else "Latest backup", 
+            keyspace=self.args.keyspace, host=self.args.host, 
+            day=self.args.day)
+        buffer = [msg]
         
         if manifests:
             for file_name in manifests:
@@ -82,18 +90,4 @@ class ListSubCommand(subcommands.SubCommand):
             
         self.log.info("Finished sub command %s" % self.command_name)
         return (0, "\n".join(buffer)) 
-
-    def _list_manifests(self, endpoint, keyspace, host):
-        
-        manifest_dir = cassandra.KeyspaceManifest.backup_dir(keyspace) 
-
-        host_manifests = []
-        for file_name in endpoint.iter_dir(manifest_dir):
-            backup_name, _ = os.path.splitext(file_name)
-            manifest = cassandra.KeyspaceManifest.from_backup_name(
-                backup_name)
-            if manifest.host == host:
-                host_manifests.append(file_name)
-        host_manifests.sort()
-        return host_manifests
 

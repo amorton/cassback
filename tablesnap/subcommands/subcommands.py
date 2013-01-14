@@ -87,22 +87,18 @@ class SubCommand(object):
         """Creates an endpoint from the command args."""
         return endpoints.create_from_args(args)
         
-    def _list_manifests(self, endpoint, keyspace, host):
+    def _list_manifests(self, endpoint, keyspace, host, day):
         """List all the manifests available for the ``keyspace`` and 
-        ``host`` using the ``endpoint``.
+        ``host`` for the datetime ``day`` using the ``endpoint``.
         
-        Returns a list of the file names.
+        Returns a sorted list of the file names.
         """
         
-        manifest_dir = cassandra.KeyspaceManifest.backup_dir(keyspace) 
+        manifest_dir = cassandra.KeyspaceManifest.backup_dir(keyspace, host, 
+            day) 
+        host_manifests = list(endpoint.iter_dir(manifest_dir))
+        host_manifests.sort()
 
-        host_manifests = []
-        for file_name in endpoint.iter_dir(manifest_dir):
-            backup_name, _ = os.path.splitext(file_name)
-            manifest = cassandra.KeyspaceManifest.from_backup_name(
-                backup_name)
-            if manifest.host == host:
-                host_manifests.append(file_name)
         return host_manifests
         
     def _load_manifest(self, endpoint, backup_name):
