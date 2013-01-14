@@ -204,20 +204,22 @@ class S3Endpoint(endpoints.EndpointBase):
         key_md5 = key.get_metadata('md5sum')
         if key_md5:
             hash_match = expected_hash == key_md5
-            log_func = self.log.debug if hash_match else self.log.warn
-            log_func("%s with key %s hash %s and expected hash %s" % (
-                "Match" if hash_match else "Mismatch", fqn, key_md5, 
-                expected_hash))
-            return hash_match
-
-        key_etag = key.etag.strip('"')
-        hash_match = expected_hash == key_etag
-        log_func = self.log.debug if hash_match else self.log.warn
-        log_func("%s with key %s etag %s and expected hash %s" % (
-            "Match" if hash_match else "Mismatch", fqn,key_etag, 
-            expected_hash))
+        else:
+            key_etag = key.etag.strip('"')
+            self.log.info("Missing md5 meta data for {key_name} using "\
+                "etag".format(key_name=key_name))
+            hash_match = expected_hash == key_etag
+        
+        if hash_match:
+            self.log.debug("Backup file {key_name} matches expected md5 "\
+                "{expected_hash}".format(path=path, 
+                expected_hash=expected_hash))
+            return True
             
-        return hash_match
+        self.log.warn("Backup file {key_name} does not match expected md5 "\
+            "{expected_hash}, got {current_md5}".format(path=path, 
+            expected_hash=expected_hash, current_md5=key_md5 or key_etag))
+        return False
 
     def iter_dir(self, relative_path, include_files=True, 
         include_dirs=False, recursive=False):

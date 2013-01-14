@@ -103,12 +103,20 @@ class LocalEndpoint(endpoints.EndpointBase):
         return os.path.exists(path)
 
     def validate_checksum(self, relative_path, expected_md5_hex):
-
         path = os.path.join(self.args.backup_base, relative_path)
 
         current_md5, _ = file_util.file_md5(path)
-        return current_md5 == expected_md5_hex
-
+        if current_md5 == expected_md5_hex:
+            self.log.debug("Backup file {path} matches expected md5 "\
+                "{expected_md5_hex}".format(path=path, 
+                expected_md5_hex=expected_md5_hex))
+            return True
+            
+        self.log.warn("Backup file {path} does not match expected md5 "\
+            "{expected_md5_hex}, got {current_md5}".format(path=path, 
+            expected_md5_hex=expected_md5_hex, current_md5=current_md5))
+        return False
+        
     def read_json(self, relative_path, ignore_missing=False):
 
         src_path = os.path.join(self.args.backup_base, relative_path)
