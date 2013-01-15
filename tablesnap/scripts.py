@@ -81,7 +81,7 @@ def arg_parser():
         choices=endpoint_names, 
         help="Name of the endpoint to use for backup and restore.")
 
-    main_parser.add_argument("--log-level", default="DEBUG", 
+    main_parser.add_argument("--log-level", default="INFO", 
         dest="log_level", 
         choices=["FATAL", "CRITICAL", "ERROR", "WARN", "INFO", "DEBUG"],
         help="Logging level.")
