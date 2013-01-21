@@ -8,6 +8,7 @@ import traceback
 
 import pkg_resources
 
+from tablesnap import cassandra
 from tablesnap.endpoints import endpoints
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -81,6 +82,10 @@ def arg_parser():
         choices=endpoint_names, 
         help="Name of the endpoint to use for backup and restore.")
 
+    main_parser.add_argument("--cass-version", default="1.2.0", 
+        dest="cass_version", 
+        help="Cassandra version to backup from or restore to.")
+
     main_parser.add_argument("--log-level", default="INFO", 
         dest="log_level", 
         choices=["FATAL", "CRITICAL", "ERROR", "WARN", "INFO", "DEBUG"],
@@ -102,6 +107,8 @@ def tablesnap_main():
 
     log = logging.getLogger(__name__)
     log.debug("Got command args %(args)s" % vars())
+    cassandra.set_version(args.cass_version)
+    
     try:
         # parsing the args works out which function we want to call.
         sub_command = args.func(args)

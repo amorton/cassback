@@ -82,6 +82,10 @@ class BackupSubCommand(subcommands.SubCommand):
         sub_parser.add_argument("--cassandra_data_dir", 
             default="/var/lib/cassandra/data",
             help="Top level Cassandra data directory.")
+            
+        sub_parser.add_argument("--host",  
+            default=socket.getfqdn(),
+            help="Host to backup this node as.")
 
         return sub_parser
 
@@ -140,21 +144,21 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         endpoint = self._endpoint(self.args)
         while True:
             # blocking call
-            ks_manifest, cass_file = self.file_q.get()
+            ks_backup, component = self.file_q.get()
             try:
-                self._run_internal(endpoint, ks_manifest, cass_file)
+                self._run_internal(endpoint, ks_backup, component)
             except (EnvironmentError) as e:
                 # sometimes it's an IOError sometimes OSError
                 # EnvironmentError is the base
                 if not(e.errno == errno.ENOENT and \
-                    e.filename==cass_file.original_path):
+                    e.filename==cass_file.file_path):
                     raise
                 self.log.info("Aborted uploading %s as it was removed" %\
-                    (cass_file.original_path,))
+                    (component,))
             self.file_q.task_done()
         return
 
-    def _run_internal(self, endpoint, ks_manifest, cass_file):
+    def _run_internal(self, endpoint, ks_backup, component):
         """Backup the cassandra file and keyspace manifest. 
 
         Let errors from here buble out. 
@@ -162,26 +166,31 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         Returns `True` if the file was uploaded, `False` otherwise.
         """
 
-        self.log.info("Uploading file %s" % (cass_file.original_path,))
-            
+        self.log.info("Uploading file %s" % (component,))
+        
+        # Create a BackupFile, this will have checksums 
+        backup_file = cassandra.BackupFile(component.file_path, 
+            host=self.args.host, component=component)
+
         # Store the cassandra file
-        if endpoint.exists(cass_file.backup_path):
-            if endpoint.validate_checksum(cass_file.backup_path, 
-                cass_file.meta["md5_hex"]):
+        if endpoint.exists(backup_file.backup_path):
+            if endpoint.validate_checksum(backup_file.backup_path, 
+                backup_file.md5):
                 
                 self.log.info("Skipping file %s skipping as there is a "\
-                    "valid backup"% (cass_file.original_path,))
+                    "valid backup"% (backup_file,))
             else:
                 self.log.warn("Possibly corrupt file %s in the backup, "\
-                    "skipping." % (cass_file.original_path,))
+                    "skipping." % (backup_file,))
             return False
-
-        uploaded_path = endpoint.store_with_meta(cass_file.original_path,
-            cass_file.meta, cass_file.backup_path)
-        endpoint.store_json(ks_manifest.to_manifest(),
-            ks_manifest.backup_path)
         
-        self.log.info("Uploaded file %s to %s" % (cass_file.original_path, 
+        uploaded_path = endpoint.store_with_meta(
+            backup_file.component.file_path,
+            backup_file.serialise(), backup_file.backup_path)
+        endpoint.store_json(ks_backup.serialise(),
+            ks_backup.backup_path)
+        
+        self.log.info("Uploaded file %s to %s" % (backup_file.file_path, 
             uploaded_path))
         return True
 
@@ -201,7 +210,7 @@ class SnapReporterThread(subcommands.SubCommandWorkerThread):
             
             size = self.file_q.qsize()
             if size > 0 or (size != last_size):
-                self.log.info("Snap worker queue contains %s items "\
+                self.log.info("Backup worker queue contains %s items "\
                     "(does not include tasks in progress)" % (size),)
             last_size = size
             time.sleep(self.interval)
@@ -258,7 +267,7 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             return False
 
         try:
-            cass_file = cassandra.CassandraFile.from_file_path(file_path)
+            component = cassandra.SSTableComponent(file_path)
         except (ValueError):
             self.log.info("Ignoring non Cassandra file %(file_path)s" % \
                 vars())
@@ -271,26 +280,27 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             else:
                 raise
 
-        if cass_file.descriptor.temporary:
+        if component.temporary:
             self.log.info("Ignoring temporary file %(file_path)s" % vars())
             return False
 
-        if cass_file.descriptor.keyspace in self.exclude_keyspaces:
+        if component.keyspace in self.exclude_keyspaces:
             self.log.info("Ignoring file %s from excluded "\
-                "keyspace %s" % (cass_file, cass_file.descriptor.keyspace))
+                "keyspace %s" % (file_path, component.keyspace))
             return False
 
-        if (cass_file.descriptor.keyspace.lower() == "system") and (
+        if (component.keyspace.lower() == "system") and (
             not self.include_system_keyspace):
 
             self.log.info("Ignoring system keyspace file %(file_path)s"\
                 % vars())
             return False
 
-        ks_manifest = cassandra.KeyspaceManifest.from_cass_file(cass_file)
+        ks_backup = cassandra.KeyspaceBackup(self.data_dir, 
+            component.keyspace)
         self.log.info("Queueing file %(file_path)s"\
             % vars())
-        self.file_queue.put((ks_manifest, cass_file))
+        self.file_queue.put((ks_backup, component))
         return True
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

@@ -9,53 +9,37 @@ import os.path
 import pwd
 import re
 import socket
+import stat as stat_fn
+import time
 
 import boto.utils
 
 log = logging.getLogger(__name__)
 
 
-def file_md5(file_path):
+def file_size(file_path):
+    """Returns the byte size of a file at ``file_path``.
+    """
+    
+    stat = os.stat(file_path)
+    assert stat_fn.S_ISDIR(stat.st_mode) == False
+    return stat.st_size
 
+def file_md5(file_path):
+    """Returns a string Hex md5 digest for the file at ``file_path``."""
+    log.debug("Calculating md5 for %(file_path)s", 
+        {"file_path" : file_path})
+    start_ms = time.time() * 10**3
     fp = open(file_path, 'rb')
     try:
-        # returns tuple (md5_hex, md5_base64, file_size)
-        md5 = boto.utils.compute_md5(fp)
+        # returns tuple (md5_hex, md5_base64, size)
+        md5, _, _ = boto.utils.compute_md5(fp)
     finally:
         fp.close()
-    return (md5[0], md5[1])
-
-def file_meta(file_path):
-    """Get a dict of the os file meta for this file. 
-    """
-
-    log.debug("Getting meta data for %(file_path)s" % vars())
-    stat = os.stat(file_path)
-
-    file_meta = {'uid': stat.st_uid,
-        'gid': stat.st_gid,
-        'mode': stat.st_mode,
-        "size" : stat.st_size
-    }
-
-    try:
-        file_meta['user'] = pwd.getpwuid(stat.st_uid).pw_name
-    except (EnvironmentError):
-        log.debug("Ignoring error getting user name.", exc_info=True)
-        file_meta['user'] = ""
-
-    try:
-        file_meta['group'] = grp.getgrgid(stat.st_gid).gr_name
-    except (EnvironmentError):
-        log.debug("Ignoring error getting group name.", exc_info=True)
-        file_meta['group'] = ""
-
-    md5 = file_md5(file_path) 
-    file_meta["md5_hex"] = md5[0]
-    file_meta["md5_base64"] = md5[1]
-
-    log.debug("For %(file_path)s got file meta %(file_meta)s " % vars())
-    return file_meta
+    duration_ms = (time.time() * 10**3) - start_ms
+    log.debug("Calculated hash %(md5)s for %(file_path)s in %(ms)s ms", 
+        {"md5":md5, "file_path":file_path, "ms":duration_ms})
+    return md5
 
 def ensure_dir(path):
     """Ensure the directories for ``path`` exist. 

@@ -88,9 +88,10 @@ class S3Endpoint(endpoints.EndpointBase):
         return
 
     def store_with_meta(self, source_path, source_meta, relative_dest_path):
-
-        is_multipart_upload = source_meta["size"] > \
-            (self.args.max_upload_size_mb * (1024**2))
+        
+        size = file_util.file_size(source_path)
+        is_multipart_upload = size > (
+            self.args.max_upload_size_mb * (1024**2))
         
         if is_multipart_upload:
             path = self._do_multi_part_upload(source_path, source_meta, 
@@ -319,7 +320,8 @@ class S3Endpoint(endpoints.EndpointBase):
         mp = self.bucket.initiate_multipart_upload(key_name, 
             metadata=metadata)
         
-        timing = endpoints.TransferTiming(self.log, fqn, source_meta["size"])
+        timing = endpoints.TransferTiming(self.log, fqn, 
+            file_util.file_size(source_path))
         chunk = None
         try:
             # Part numbers must start at 1self.
@@ -360,7 +362,8 @@ class S3Endpoint(endpoints.EndpointBase):
             source_meta["md5_base64"], 
             source_meta["size"]
         )
-        timing = endpoints.TransferTiming(self.log, fqn, source_meta["size"])
+        timing = endpoints.TransferTiming(self.log, fqn, 
+            file_util.file_size(source_path))
         key.set_contents_from_filename(source_path, replace=False, md5=md5, 
             cb=timing.progress, num_cb=timing.num_callbacks)
 

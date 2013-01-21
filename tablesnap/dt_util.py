@@ -32,7 +32,7 @@ DT_INPUT_FORMATS= [
 """Formats to accept as datetime input. """
 
 def now():
-    return datetime.datetime.now()
+    return datetime.datetime.utcnow()
     
 def now_iso():
     """Get the current date/time formatted as ISO."""

@@ -59,7 +59,8 @@ class LocalEndpoint(endpoints.EndpointBase):
         file_util.ensure_dir(os.path.dirname(dest_path))
         
         # Store the actual file
-        with endpoints.TransferTiming(self.log, dest_path, source_meta["size"]):
+        with endpoints.TransferTiming(self.log, dest_path, 
+            file_util.file_size(source_path)):
             shutil.copy(source_path, dest_path)
         
         # Store the meta data
@@ -105,7 +106,7 @@ class LocalEndpoint(endpoints.EndpointBase):
     def validate_checksum(self, relative_path, expected_md5_hex):
         path = os.path.join(self.args.backup_base, relative_path)
 
-        current_md5, _ = file_util.file_md5(path)
+        current_md5 = file_util.file_md5(path)
         if current_md5 == expected_md5_hex:
             self.log.debug("Backup file {path} matches expected md5 "\
                 "{expected_md5_hex}".format(path=path, 

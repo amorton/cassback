@@ -77,7 +77,7 @@ class SurveyEndpoint(endpoints.EndpointBase):
         msg = self.FILE_OP_PATTERN.format(time=dt_util.now_iso(), 
             action="stored", src_path=source_path, 
             dest_path=relative_dest_path, 
-            bytes=source_meta["size"])
+            bytes=file_util.file_size(source_path))
         self.log_file.write(msg)
         self.log_file.flush()
         
