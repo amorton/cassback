@@ -66,5 +66,16 @@ def maybe_remove_dirs(path):
             raise
     return
 
-
-
+def human_disk_bytes(bytes):
+    """Format the ``bytes`` as a human readable value.
+    """
+    patterns = [
+        (1024.0 ** 3, "G"),
+        (1024.0 ** 2, "M"),
+        (1024.0, "K")
+    ]
+    for scale, label in patterns:
+        if bytes >= scale:
+            return "{i:.1f}{label}".format(i=(bytes/scale), label=label)
+    return "%sB" % (bytes,)
+    

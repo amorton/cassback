@@ -23,6 +23,7 @@ import logging
 import os.path
 import pwd
 import Queue
+import json
 import socket
 import time
 
@@ -107,7 +108,8 @@ class RestoreSubCommand(subcommands.SubCommand):
         self.log.info("Starting sub command %s" % self.command_name)
 
         endpoint = self._endpoint(self.args)
-        manifest = self._load_manifest(endpoint, self.args.backup_name)
+        manifest = self._load_manifest_by_name(endpoint, 
+            self.args.backup_name)
 
         # We put the files that need to be restored in there.
         work_queue = Queue.Queue()
@@ -115,13 +117,13 @@ class RestoreSubCommand(subcommands.SubCommand):
         # So we can say what was copied to where.
         result_queue = Queue.Queue()
 
-        # Fill the queue with work to be done. 
-        file_names = []
-        for file_name in manifest.yield_file_names():
-            work_queue.put(file_name)
-            file_names.append(file_name)
-        self.log.info("Queued file for restoring: %s" % (
-            ", ".join(file_names)))
+        # Fill the queue with components we want to restore.
+        components = []
+        for component in manifest.iter_components():
+            work_queue.put(json.dumps(component.serialise()))
+            components.append(component)
+        self.log.info("Queued components for restore: %s", 
+            ", ".join(str(c) for c in components))
 
         # Make worker threads to do the work. 
         workers = [
@@ -145,14 +147,16 @@ class RestoreSubCommand(subcommands.SubCommand):
 
         # Make a pretty message 
         buffer = ["Restored files:"]
-        from_to = []
+        restored_files = []
+        # result_queue has BackupFile's
         while not result_queue.empty():
-            from_to.append(result_queue.get_nowait())
+            restored_files.append(cassandra.RestoredFile.deserialise(
+                json.loads(result_queue.get_nowait())))
 
-        if from_to:      
+        if restored_files:      
             buffer.extend(
-                "%s -> %s" % x
-                for x in from_to
+                f.restore_msg()
+                for f in restored_files
             )
         else:
             buffer.append("None")
@@ -202,105 +206,108 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
 
         def safe_get():
             try:
-                return self.work_queue.get_nowait()
+                return cassandra.SSTableComponent.deserialise(json.loads(
+                    self.work_queue.get_nowait()))
             except (Queue.Empty):
                 return None
 
         endpoint = self._endpoint(self.args)
-        file_name = safe_get()
-        while file_name is not None:
-
-            # Locate the file and work out where we are going to restore it 
-            cass_file = cassandra.CassandraFile.from_file_path(file_name,
-                meta={})
-            dest_path = os.path.join(self.args.cassandra_data_dir, 
-                cass_file.restore_path)
-            self.log.info("Restoring file %(cass_file)s to %(dest_path)s" % \
-                vars())
-
+        component = safe_get()
+        while component is not None:
+            self.log.info("Restoring component %s under %s", component, 
+                self.args.cassandra_data_dir)
+            
+            # We need a backup file for the component, so we know 
+            # where it is stored and where it will backup to 
+            # we also want the MD5, that is on disk
+            backup_file = endpoint.read_backup_file(cassandra.BackupFile(
+                None, component=component, md5="").backup_path)
+                
             # Restore the file if we want to
-            should_restore, reason = self._should_restore(cass_file, 
-                dest_path)
+            should_restore, reason = self._should_restore(backup_file, 
+                self.args.cassandra_data_dir)
             if should_restore:
                 
-                meta = endpoint.read_meta(cass_file.backup_path)
-                
-                file_util.ensure_dir(os.path.dirname(dest_path))
-                endpoint.restore(cass_file.backup_path, dest_path)    
-                self.log.info("Restored file %(cass_file)s to %(dest_path)s"\
-                     % vars())
+                restore_path = endpoint.restore_file(backup_file, 
+                    self.args.cassandra_data_dir)
+                self.log.info("Restored file %s to %s", backup_file, 
+                    restore_path)
                 
                 if not self.args.no_chown:
-                    self._chown_restored_file(dest_path, meta, 
+                    self._chown_restored_file(backup_file, restore_path, 
                         self.args.owner, self.args.group)
-                        
-                self.result_queue.put((file_name, dest_path))
+                if not self.args.no_chmod:
+                    self._chmod_restored_file(backup_file, restore_path)
+                
+                self.result_queue.put(json.dumps(cassandra.RestoredFile(True, 
+                    restore_path, backup_file).serialise()))
             
             else:
-                self.log.info("Skipping file %(cass_file)s because "\
-                    "%(reason)s" % vars())
-                self.result_queue.put((file_name, 
-                    "Skipped %(reason)s" % vars()))
+                self.log.info("Skipping file %s because %s", backup_file, 
+                    reason)
+                self.result_queue.put(json.dumps(cassandra.RestoredFile(
+                    False, None, backup_file, reason_skipped=reason
+                    ).serialise()))
 
             self.work_queue.task_done()
-            file_name = safe_get()
+            component = safe_get()
         return
 
-    def _should_restore(self, cass_file, dest_path):
-        """Called to test if the ``cass_file`` should be restored to 
+    def _should_restore(self, backup_file, dest_prefix):
+        """Called to test if the ``backup_file`` should be restored to 
         ``dest_path``.
 
         Returns a tuple of ``(should_restore, reason)`` where ``reason`` 
         is a string description to say why not, .e.g "Existing file"
         """
 
-        if os.path.isfile(dest_path):
+        if os.path.exists(os.path.join(dest_prefix, 
+            backup_file.restore_path)):
             return (False, "Existing file")
 
         return (True, None)
     
-    def _chown_restored_file(self, path, meta, arg_user, arg_grp):
-        """Restore ownership of the file at ``path`` to either the 
-        user and group in ``meta`` or the ``arg_user`` and ``arg_grp`` if 
-        specified.
+    def _chown_restored_file(self, backup_file, restore_path, arg_user, 
+        arg_grp):
+        """Restore ownership of the file at ``restore_path`` to either the 
+        user and group in ``backup_file`` or the ``arg_user`` and ``arg_grp`` 
+        if specified.
         """
         
-        user = arg_user or meta.get("user")
+        user = arg_user or backup_file.component.stat.user
         if not user:
-            self.log.warn("Could not determine user name to chown "\
-                "{path}".format(dest_path=dest_path))
+            self.log.warn("Could not determine user name to chown %s", 
+                restore_path)
             uid = -1
         else:
-            # will raise a KeyError on error. 
-            # let it fail.
+            # will raise a KeyError on error let it fail.
             uid = pwd.getpwnam(user).pw_uid
         
-        group = arg_grp or meta.get("group")
+        group = arg_grp or backup_file.component.stat.group
         if not group:
-            self.log.warn("Could not determine group name to chown "\
-                "{path}".format(dest_path=dest_path))
+            self.log.warn("Could not determine group name to chown %s", 
+                restore_path)
             gid = -1
         else:
-            # will raise a KeyError on error. 
-            # let it fail.
+            # will raise a KeyError on error let it fail.
             gid = grp.getgrnam(group).gr_gid
-            
-        self.log.debug("chowning {path} to {user}/{uid} and "\
-            "{group}/{gid}".format(**vars()))
-        os.chown(path, uid, gid)
+        
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug("chown'ing {restore_path} to {user}/{uid} and "\
+                "{group}/{gid}".format(**vars()))
+        os.chown(restore_path, uid, gid)
         return
 
-    def _chmod_restored_file(self, path, meta):
-        """Restore fule mode of the file at ``path``.
+    def _chmod_restored_file(self, backup_file, restore_path):
+        """Restore mode of the ``backup_file`` restored to ``restore_path``.
         """
         
-        mode = meta.get("mode")
-        if mode is None:
-            self.log.warn("Could not determine file mode to chmod "\
-                "{path}".format(dest_path=dest_path))
+        if not backup_file.component.stat.mode:
+            self.log.warn("Could not determine file mode for restored file "\
+                "%s at %s", backup_file, restore_path)
             return
 
-        self.log.debug("chmoding {path} to {mode}".format(path=path, 
-            mode=mode))
-        os.chmod(path, mode)
+        self.log.debug("chmoding %s to %s", restore_path, 
+            backup_file.component.stat.mode)
+        os.chmod(restore_path, backup_file.component.stat.mode)
         return

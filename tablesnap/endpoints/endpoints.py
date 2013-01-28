@@ -77,33 +77,27 @@ class EndpointBase(object):
     def validate_args(cls, args):
         pass
         
-    def store_with_meta(self, source_path, source_meta, relative_dest_path):
-        """Stores the local file at ``source_path`` at ``relative_dest_path`` 
-        and included.
+    def backup_file(self, backup_file):
+        """Store the SSTable ``backup_file``.
         
         Returns the fully qualified path to the file in the backup. 
         """
         raise NotImplementedError()
 
-    def read_meta(self, relative_path):
-        """Gets a dict of the meta data associated with the file at the 
-        ``relative_path``.
-
-        If ``ignore_missing`` and the file does not exist an empty dict is 
-        returned. Otherwise an :exc:`EnvironmentError` with 
-        :attr:`errno.ENOENT` as the errno is raised.
+    def read_backup_file(self, path):
+        """Creates a :cls:`cassandra.BackupFile` from the meta for the file 
+        at ``path``
         """
         raise NotImplementedError()
 
-    def store_json(self, data, relative_dest_path):
+    def backup_keyspace(self, ks_backup):
         raise NotImplementedError()
 
-    def read_json(self, relative_dest_path):
+    def read_keyspace(self, path):
         raise NotImplementedError()
 
-    def restore(self, relative_src_path, dest_path):
-        """Restores the file in the backup at ``relative_src_path`` to the 
-        path at ``dest_path``.
+    def restore_file(self, backup_file, dest_prefix):
+        """Restore the ``backup_file`` under the ``dest_prefix``.
         
         Returns the fully qualified backup path.
         """

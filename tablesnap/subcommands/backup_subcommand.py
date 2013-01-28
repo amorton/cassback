@@ -148,10 +148,8 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
             try:
                 self._run_internal(endpoint, ks_backup, component)
             except (EnvironmentError) as e:
-                # sometimes it's an IOError sometimes OSError
-                # EnvironmentError is the base
                 if not(e.errno == errno.ENOENT and \
-                    e.filename==cass_file.file_path):
+                    e.filename==component.file_path):
                     raise
                 self.log.info("Aborted uploading %s as it was removed" %\
                     (component,))
@@ -184,11 +182,8 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
                     "skipping." % (backup_file,))
             return False
         
-        uploaded_path = endpoint.store_with_meta(
-            backup_file.component.file_path,
-            backup_file.serialise(), backup_file.backup_path)
-        endpoint.store_json(ks_backup.serialise(),
-            ks_backup.backup_path)
+        uploaded_path = endpoint.backup_file(backup_file)
+        endpoint.backup_keyspace(ks_backup)
         
         self.log.info("Uploaded file %s to %s" % (backup_file.file_path, 
             uploaded_path))

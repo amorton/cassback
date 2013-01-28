@@ -20,6 +20,7 @@ import cStringIO
 import errno
 import json
 import logging
+import numbers
 import os.path
 
 import boto
@@ -87,24 +88,21 @@ class S3Endpoint(endpoints.EndpointBase):
                 "multipart_chunk_size_mb value is 5.")
         return
 
-    def store_with_meta(self, source_path, source_meta, relative_dest_path):
+    def backup_file(self, backup_file):
         
-        size = file_util.file_size(source_path)
-        is_multipart_upload = size > (
+        is_multipart_upload = backup_file.component.stat.size > (
             self.args.max_upload_size_mb * (1024**2))
         
         if is_multipart_upload:
-            path = self._do_multi_part_upload(source_path, source_meta, 
-                relative_dest_path)
+            path = self._do_multi_part_upload(backup_file)
         else:
-            path = self._do_single_part_upload(source_path, source_meta, 
-            relative_dest_path)
+            path = self._do_single_part_upload(backup_file)
         
         return path
         
-    def read_meta(self, relative_path):
+    def read_backup_file(self, path):
         
-        key_name = relative_path
+        key_name = path
         fqn = self._fqn(key_name)
 
         self.log.debug("Starting to read meta for key %(fqn)s " % vars())
@@ -114,18 +112,19 @@ class S3Endpoint(endpoints.EndpointBase):
             raise EnvironmentError(errno.ENOENT, fqn)
         
         self.log.debug("Finished reading meta for key %(fqn)s " % vars())
-        return key.metadata
+        return cassandra.BackupFile.deserialise(self._aws_meta_to_dict(
+            key.metadata))
 
-    def store_json(self, data, relative_dest_path):
+    def backup_keyspace(self, ks_backup):
 
-        key_name = relative_dest_path
+        key_name = ks_backup.backup_path
         fqn = self._fqn(key_name)
         
         self.log.debug("Starting to store json to %(fqn)s" % vars())
         
         # TODO: Overwrite ? 
         key = self.bucket.new_key(key_name)
-        json_str = json.dumps(data)
+        json_str = json.dumps(ks_backup.serialise())
         timing = endpoints.TransferTiming(self.log, fqn, len(json_str))
         key.set_contents_from_string(
             json_str,
@@ -136,9 +135,9 @@ class S3Endpoint(endpoints.EndpointBase):
         return 
         
 
-    def read_json(self, relative_dest_path):
+    def read_keyspace(self, path):
         
-        key_name = relative_dest_path
+        key_name = path
         fqn = self._fqn(key_name)
         
         self.log.debug("Starting to read json from %(fqn)s" % vars())
@@ -150,27 +149,29 @@ class S3Endpoint(endpoints.EndpointBase):
         data = json.loads(key.get_contents_as_string(cb=timing.progress, 
             num_cb=timing.num_callbacks))
         self.log.debug("Finished reading json from %(fqn)s" % vars())
-        return data
         
-    def restore(self, relative_src_path, dest_path):
-        """Restores the file in the backup at ``relative_src_path`` to the 
-        path at ``dest_path``.
+        return cassandra.KeyspaceBackup.deserialise(data)
+        
+    def restore_file(self, backup_file, dest_prefix):
+        """
         """
         
-        key_name = relative_src_path
+        key_name = backup_file.backup_path
         fqn = self._fqn(key_name)
-        
+        dest_path = os.path.join(dest_prefix, backup_file.restore_path)
+        file_util.ensure_dir(os.path.dir(dest_path))
         self.log.debug("Starting to restore from %(fqn)s to %(dest_path)s" \
             % vars())
         
         key = self.bucket.get_key(key_name)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
-        timing = endpoints.TransferTiming(self.log, fqn, int(key.metadata["size"]))
+        timing = endpoints.TransferTiming(self.log, fqn, 
+            backup_file.component.stat.size)
         key.get_contents_to_filename(dest_path, cb=timing.progress, 
             num_cb=timing.num_callbacks)
         
-        return key_name
+        return dest_path
 
     def exists(self, relative_path):
         """Returns ``True`` if the file at ``relative_path`` exists. False 
@@ -299,6 +300,56 @@ class S3Endpoint(endpoints.EndpointBase):
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Custom
     
+    def _dict_to_aws_meta(self, data):
+        """Turn a python dict into a dict suitable for use as S3 key meta. 
+        
+        All values must be strings.
+        Does not support multi levels, so create a single level pipe delim.
+        """
+        
+        
+        def add_meta(meta, key, value, context=None):
+            if key:
+                if key.find("|") > -1:
+                    raise ValueError("Key cannot contain a '|' char, got "\
+                        "{key}".format(key=key))
+                fq_key = "{context}|{key}".format(context=context or "", 
+                    key=key)
+            else:
+                fq_key = None
+            if isinstance(value, dict):
+                return add_meta(meta, key, value, 
+                    context=fq_key)
+            elif isinstance(value, basestring):
+                assert fq_key
+                meta[fq_key] = value
+            else:
+                raise ValueError("All values must be string or dict, got "\
+                    "{cls} for {key}".format(cls=type(value), key=key))
+    
+        aws_meta = add_meta({}, None, data)
+        self.log.debug("Converted data {data} to aws_meta {aws_meta}".format(
+            data=data, aws_meta=aws_meta))
+        return aws_meta
+        
+    def _aws_meta_to_dict(self, aws_meta):
+        """Convert the aws meta to a multi level dict."""
+        
+        def set_value(data, key, value):
+            head, _, tail = key.partition("|")
+            if not tail:
+                data[key] = value
+                return
+            # we have another level of dict
+            data = data.setdefault(key, {})
+            set_value(data, tail, value)
+            return
+            
+        props = {}
+        for k, v in aws_meta.iteritems():
+            set_value(props, k, v)
+        return props
+
     def _fqn(self, key_name):
         """Returns fully qualified name for the bucket and key.
         
@@ -307,25 +358,24 @@ class S3Endpoint(endpoints.EndpointBase):
         
         return  "%s//%s" % (self.args.bucket_name, key_name)
         
-    def _do_multi_part_upload(self, source_path, source_meta, key_name):
+    def _do_multi_part_upload(self, backup_file):
         
-        fqn = self._fqn(key_name)
-        self.log.debug("Starting multi part upload of %(source_path)s to "\
+        fqn = self._fqn(backup_file.backup_path)
+        self.log.debug("Starting multi part upload of %(backup_file)s to "\
             "%(fqn)s" % vars())
         # All meta tags must be strings
-        metadata = dict(
-            (k , str(v))
-            for k,v in source_meta.iteritems() 
-        )
-        mp = self.bucket.initiate_multipart_upload(key_name, 
+        metadata = self._dict_to_aws_meta(backup_file.serialise())
+        mp = self.bucket.initiate_multipart_upload(backup_file.file_path, 
             metadata=metadata)
         
         timing = endpoints.TransferTiming(self.log, fqn, 
-            file_util.file_size(source_path))
+            backup_file.component.stat.size)
         chunk = None
         try:
             # Part numbers must start at 1self.
-            for part, chunk in enumerate(self._chunk_file(source_path),1):
+            for part, chunk in enumerate(self._chunk_file(
+                backup_file.file_path),1):
+                
                 self.log.debug("Uploading part %(part)s with" % vars())
                 try:
                     mp.upload_part_from_file(chunk, part, cb=timing.progress, 
@@ -337,37 +387,34 @@ class S3Endpoint(endpoints.EndpointBase):
             raise
 
         mp.complete_upload()
-        self.log.debug("Finished multi part upload of %(source_path)s to "\
+        self.log.debug("Finished multi part upload of %(backup_file)s to "\
             "%(fqn)s" % vars())
             
         return fqn
 
-    def _do_single_part_upload(self, source_path, source_meta, key_name):
+    def _do_single_part_upload(self, backup_file):
         
-        fqn = self._fqn(key_name)
-        self.log.debug("Starting single part upload of %(source_path)s to "\
+        fqn = self._fqn(backup_file.backup_path)
+        self.log.debug("Starting single part upload of %(backup_file)s to "\
             "%(fqn)s" % vars())
             
-        key = self.bucket.new_key(key_name)
+        key = self.bucket.new_key(backup_file.backup_path)
         
         # All meta data fields have to be strings.
-        key.update_metadata(dict(
-            (k , str(v))
-            for k, v in source_meta.iteritems()
-        ))
+        key.update_metadata(self._dict_to_aws_meta(backup_file.serialise()))
         
-        # Rebuild the MD5 tuple boto makes
-        md5 = (
-            source_meta["md5_hex"], 
-            source_meta["md5_base64"], 
-            source_meta["size"]
-        )
+        # # Rebuild the MD5 tuple boto makes
+        # md5 = (
+        #     backup_file.md5, 
+        #     source_meta["md5_base64"], 
+        #     source_meta["size"]
+        # )
         timing = endpoints.TransferTiming(self.log, fqn, 
-            file_util.file_size(source_path))
-        key.set_contents_from_filename(source_path, replace=False, md5=md5, 
+            backup_file.component.stat.size)
+        key.set_contents_from_filename(backup_file.file_path, replace=False,
             cb=timing.progress, num_cb=timing.num_callbacks)
 
-        self.log.debug("Finished single part upload of %(source_path)s to "\
+        self.log.debug("Finished single part upload of %(backup_file)s to "\
             "%(fqn)s" % vars())
         return fqn
     

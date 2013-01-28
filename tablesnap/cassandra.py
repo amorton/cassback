@@ -18,6 +18,7 @@
 """Utilities for working with Cassandra and the versions."""
 
 import datetime
+import errno
 import logging
 import grp
 import os
@@ -122,30 +123,44 @@ class FileStat(object):
             except (AttributeError):
                 meta.data = self._extract_meta(file_path)
             return meta.data
-            
+        
         self.file_path = file_path
-        self.uid = uid or meta()["uid"]
-        self.gid = gid or meta()["gid"]
-        self.mode = mode or meta()["mode"]
-        self.size = size or meta()["size"]
-        self.user = user or meta()["user"]
-        self.group = group or meta()["group"]
+        self.uid = meta()["uid"] if uid is None else uid
+        self.gid = meta()["gid"] if gid is None else gid
+        self.mode = meta()["mode"] if mode is None else mode
+        self.size = meta()["size"] if size is None else size
+        self.user = meta()["user"] if user is None else user
+        self.group = meta()["group"] if group is None else group
     
     def __str__(self):
         return "FileStat for {file_path}: uid {uid}, user {user}, gid {gid},"\
             " group {group}, mode {mode}, size {size}".format(**vars(self))
     
     def serialise(self):
-        """Serialise the state to a dict."""
-        return dict(vars(self))
+        """Serialise the state to a dict.
+        
+        Every value has to be a string or a dict.
+        """
+        return {
+            "file_path" : self.file_path,
+            "uid" : str(self.uid), 
+            "gid" : str(self.gid), 
+            "mode" : str(self.mode), 
+            "size" : str(self.size), 
+            "user" : str(self.user), 
+            "group" : str(self.group), 
+        }
     
     @classmethod
     def deserialise(cls, data):
         """Create an instance use the ``data`` dict."""
-        assert data        
-        return cls(data["file_path"], uid=data["uid"], user=data["user"], 
-            gid=data["gid"], group=data["group"], mode=data["mode"], 
-            size=data["size"])
+        assert data
+        def get_i(field):
+            return int(data[field])
+            
+        return cls(data["file_path"], uid=get_i("uid"), user=data["user"], 
+            gid=get_i("gid"), group=data["group"], mode=get_i("mode"), 
+            size=get_i("size"))
             
     def _extract_meta(self, file_path):
         """Get a dict of the os file meta for the ``file_path``
@@ -195,13 +210,16 @@ class SSTableComponent(object):
             return props.data
         
         self.file_path = file_path
-        self.keyspace = keyspace or props()["keyspace"]
-        self.cf = cf or props()["cf"]
-        self.version = version or props()["version"]
-        self.generation = generation or props()["generation"]
-        self.component = component or props()["component"]
-        self.temporary = temporary or props()["temporary"]
-        self.stat = stat or FileStat(file_path)
+        self.keyspace = props()["keyspace"] if keyspace is None else keyspace
+        self.cf = props()["cf"] if cf is None else cf
+        self.version = props()["version"] if version is None else version
+        self.generation = props()["generation"] if generation is None \
+            else generation
+        self.component = props()["component"] if component is None \
+            else component
+        self.temporary = props()["temporary"] if temporary is None \
+            else temporary
+        self.stat = FileStat(file_path) if stat is None else stat
     
     def __str__(self):
         return "SSTableComponent for {file_path}: keyspace {keyspace}, "\
@@ -216,9 +234,9 @@ class SSTableComponent(object):
             "keyspace" : self.keyspace, 
             "cf" : self.cf,
             "version" : self.version, 
-            "generation" : self.generation,
+            "generation" : str(self.generation),
             "component" : self.component, 
-            "temporary" : self.temporary, 
+            "temporary" : str(self.temporary), 
             "stat" : self.stat.serialise()
         }
 
@@ -229,8 +247,8 @@ class SSTableComponent(object):
         assert data
         return cls(data["file_path"], keyspace=data["keyspace"], 
             cf=data["cf"], version=data["version"], 
-            generation=data["generation"], component=data["component"], 
-            temporary=data["temporary"], 
+            generation=int(data["generation"]), component=data["component"], 
+            temporary=True if data["temporary"].lower() == "true" else False, 
             stat=FileStat.deserialise(data["stat"]))
             
     def _component_properties(self, file_path):
@@ -240,10 +258,9 @@ class SSTableComponent(object):
         
         Returns a dict of the component properties.
         """
-        self.log.debug("Parsing file path {file_path}".format(
-            file_path=file_path))
+        self.log.debug("Parsing file path %s", file_path)
             
-        _, file_name = os.path.split(file_path)
+        file_dir, file_name = os.path.split(file_path)
         tokens = file_name.split("-")
         def pop():
             """Pop from the tokens. 
@@ -269,20 +286,34 @@ class SSTableComponent(object):
             "cf" : pop(),
             "temporary" : peek() == TEMPORARY_MARKER
         }
-        
         if properties["temporary"]:
             pop()
         
+        # If we did not get the keyspace from the file name it should 
+        # be in the path
+        if TARGET_VERSION < (1,1,0):
+            assert file_dir
+            assert not properties["keyspace"]
+            _, ks = os.path.split(file_dir)
+            self.log.debug("Using Cassandra version %s, extracted KS name %s"\
+                " from file dir %s", TARGET_VERSION, ks, file_dir)
+            properties["keyspace"] = ks
+            
         #Older versions did not use two character file versions.
         if FILE_VERSION_PATTERN.match(peek()):
             properties["version"] = pop()
         else:
-            # legacy
-            properties["version"] = "a"
+            # If we cannot work out the version then we propably 
+            # decoded the file path wrong cause the cassandra version is wrong
+            raise RuntimeError("Got invalid file version {version} for "\
+                "file path {path} using Cassandra version {cass_ver}.".format(
+                version=pop(), path=file_path, cass_ver=TARGET_VERSION))
 
         properties["generation"] = int(pop())
         properties["component"] = pop()
-
+        
+        self.log.debug("Got file properties %s from path %s", properties, 
+            file_path)
         return properties
     
     @property
@@ -299,6 +330,17 @@ class SSTableComponent(object):
             # file name adds the keyspace. 
             fmt = "{keyspace}-{cf}-{version}-{generation}-{component}"
         return fmt.format(**vars(self))
+
+    @property
+    def backup_file_name(self):
+        """Returns the file name ot use when backing up this component.
+        
+        This name ignores the curret :attr:`cassandra.TARGET_VERSION`.
+        """
+        # Assume 1.1 and beyond 
+        # file name adds the keyspace. 
+        return "{keyspace}-{cf}-{version}-{generation}-{component}".format(
+            **vars(self))
         
     @property
     def cass_version(self):
@@ -384,24 +426,39 @@ class BackupFile(object):
         
         self.file_path = component.file_path if component is not \
             None else file_path
-        self.component = component or SSTableComponent(file_path)
-        self.host = host or socket.getfqdn()
-        self.md5 = md5 or file_util.file_md5(file_path)
+        self.component = SSTableComponent(file_path) if component is None \
+            else component
+        self.host = socket.getfqdn() if host is None else host
+        self.md5 = file_util.file_md5(self.file_path) if md5 is None else md5
         
     def __str__(self):
         return "BackupFile {file_path}: host {host}, md5 {md5}, "\
             "{component}".format(**vars(self))
     
     def serialise(self):
-        """Serialises the instance to a dict
+        """Serialises the instance to a dict.
+        
+        All values must be string or dict.
         """
         
         return {
             "host" : self.host,
             "md5" : self.md5, 
-            "cassandra_version" : TARGET_VERSION, 
+            "cassandra_version" : ".".join(str(i) for i in TARGET_VERSION), 
             "component" : self.component.serialise()
         }
+
+    @classmethod
+    def deserialise(cls, data):
+        """Deserialise the ``data`` dict to create a BackupFile."""
+        
+        assert data
+        return cls(
+            None,
+            host=data["host"], 
+            md5=data["md5"], 
+            component=SSTableComponent.deserialise(data["component"])
+        )
         
     @classmethod
     def backup_keyspace_dir(self, host, keyspace):
@@ -425,33 +482,9 @@ class BackupFile(object):
             self.host,
             self.component.keyspace,
             self.component.cf,
-            self.component.file_name,
+            self.component.backup_file_name,
         ))
 
-# ============================================================================
-#
-
-class RestoreFile(object):
-    """A file that has been backed up and it going to be restored.
-    """
-
-
-    def __init__(self, host=None, md5=None, component=None):
-        self.component = component
-        self.host = host 
-        self.md5 = md5
-    
-    @classmethod
-    def deserialise(cls, data):
-        """Deserialise the data from a BackupFile to create a RestoreFile."""
-        
-        assert data
-        return cls(
-            host=data["host"], 
-            md5=data["md5"], 
-            component=SSTableComponent.deserialise(data["component"])
-        )
-        
     @property
     def restore_path(self):
         """Gets the path to restore this file to formatted for the current 
@@ -462,17 +495,65 @@ class RestoreFile(object):
         if TARGET_VERSION < (1, 1, 0):
             # Pre 1.1 path was keyspace/sstable
             return os.path.join(*(
-                self.keyspace,
-                self.file_name,
+                self.component.keyspace,
+                self.component.file_name,
             ))
         # after 1.1  path was keyspace/cf/sstable
         return os.path.join(*(
-            self.keyspace,
-            self.cf_name,
-            self.file_name,
+            self.component.keyspace,
+            self.component.cf,
+            self.component.file_name,
         ))
-        
 
+# ============================================================================
+#
+
+class RestoredFile(object):
+    """A file that was processed during a restore.
+    
+    It may or may not have been restored.
+    """
+    
+    def __init__(self, was_restored, restore_path, backup_file, 
+        reason_skipped=None):
+        self.was_restored = was_restored
+        self.restore_path = restore_path
+        self.backup_file = backup_file
+        self.reason_skipped = reason_skipped
+        
+    def serialise(self):
+        """Serialises the instance to a dict.
+        
+        All values must be string or dict.
+        """
+        
+        return {
+            "was_restored" : "true" if self.was_restored else "false",
+            "restore_path" : self.restore_path, 
+            "backup_file" : self.backup_file.serialise(), 
+            "reason_skipped" : self.reason_skipped or ""
+        }
+
+    @classmethod
+    def deserialise(cls, data):
+        """Deserialise the ``data`` dict to create a :cls:`RestoredFile`."""
+        
+        assert data
+        return cls(
+            True if data["was_restored"] == "true" else False, 
+            data["restore_path"], 
+            BackupFile.deserialise(data["backup_file"]), 
+            reason_skipped = data["reason_skipped"]
+        )
+    
+    def restore_msg(self):
+        """Small message describing where the file was restored from -> to."""
+        
+        if self.was_restored:
+            return "{s.backup_file.backup_path} -> {s.restore_path}".format(
+                s=self)
+        return "{s.backup_file.backup_path} -> "\
+            "Skipped: {s.reason_skipped}".format(s=self)
 # ============================================================================
 #
 
@@ -498,7 +579,6 @@ class KeyspaceBackup(object):
             
     def serialise(self):
         """Return manifest that desribes the backup set."""
-        
         files = {
             key : [component.serialise() for component in value]
             for key, value in self.ks_files.iteritems()
@@ -518,7 +598,7 @@ class KeyspaceBackup(object):
         assert data
         files = {
             key : [SSTableComponent.deserialise(comp) for comp in value]
-            for key, value in data["ks_files"] 
+            for key, value in data["ks_files"].iteritems() 
         }
         return cls(None, data["keyspace"], host=data["host"], 
             timestamp=dt_util.from_iso(data["timestamp"]), 
@@ -537,29 +617,44 @@ class KeyspaceBackup(object):
         else:
             # Different dir for each CF.
             try:
-                _, search_dirs, _ = os.walk(os.path.join(
+                _, dir_names, _ = os.walk(os.path.join(
                     data_dir, keyspace)).next()
+                search_dirs = [
+                    os.path.join(data_dir, keyspace, dir_name)
+                    for dir_name in dir_names
+                ]
             except (StopIteration):
                 search_dirs = []
-
-        ks_files = {}
+        self.log.debug("Searching for SSTables in %s", search_dirs)
+        
+        # List all the files in the cf/ks dirs.
+        all_files = []
         for search_dir in search_dirs:
             try:
-                _, cf_files, _ = os.walk(search_dir).next() 
+                _, _, cf_files = os.walk(search_dir).next() 
             except (StopIteration):
                 cf_files = []
-                
-            for cf_file in cf_files:
-                full_path = os.path.join(search_dir, cf_file)
-                try:
-                    component = SSTableComponent(full_path)
-                except (ValueError):
-                    # not a valid file name
-                    pass
-                else:
-                    if not component.temporary:
-                        ks_files.setdefault(component.cf, []).append(
-                            component)
+            all_files.extend(
+                os.path.join(search_dir, cf_file)
+                for cf_file in cf_files
+            )
+        
+        # Create components for the files. 
+        # Note that file coud disappear at this point.
+        ks_files = {}
+        for file_path in all_files:
+            try:
+                component = SSTableComponent(file_path)
+            except (ValueError):
+                # not a valid file name
+                self.log.debug("Ignoring non Cassandra file %s", file_path)
+            except (EnvironmentError) as e:
+                if e.errno == errno.ENOENT:
+                    self.log.info("Ignoring missing file %s", file_path)
+            else:
+                if not component.temporary:
+                    ks_files.setdefault(component.cf, []).append(
+                        component)
         return ks_files
    
     @classmethod
@@ -568,11 +663,12 @@ class KeyspaceBackup(object):
         
         The object does not contain a ks_files list."""
         
+
         # format is timestamp-keyspace-host
         # host may have "-" parts so only split the first two tokens 
         # from the name.
         tokens = backup_name.split("-", 2)
-
+        assert len(tokens) == 3, "Invalid backup_name %s" % (backup_name,)
         safe_ts = tokens.pop(0)
         keyspace = tokens.pop(0)
         host = tokens.pop(0)
@@ -623,13 +719,17 @@ class KeyspaceBackup(object):
             self.backup_day_dir(self.keyspace, self.host, self.timestamp), 
             "%s.json" % (self.backup_name,)
         )
-
-    def yield_file_names(self):
-        """ 
+    
+    def iter_components(self):
+        """Iterates through the SSTableComponents in this backup.
+        
+        Components ordered by column family. You will get all the components
+        from "Aardvark" CF before "Beetroot"
         """
+        
+        cf_names = self.ks_files.keys()
+        cf_names.sort()
+        for cf_name in cf_names:
+            for component in self.ks_files[cf_name]:
+                yield component
 
-        assert self.column_families is not None
-
-        for cf_name, cf_file_names in self.column_families.iteritems():
-            for file_name in cf_file_names:
-                yield file_name

@@ -95,35 +95,35 @@ class SubCommand(object):
         Returns a sorted list of the manifests.
         """
         
-        manifest_dir = cassandra.KeyspaceManifest.backup_day_dir(keyspace, host, 
-            day) 
+        manifest_dir = cassandra.KeyspaceBackup.backup_day_dir(keyspace, 
+            host, day) 
         
         # Create a manifest from the file name that does not have the
         # full file list.
         manifests = [
-            cassandra.KeyspaceManifest.from_backup_path(file_name)
+            cassandra.KeyspaceBackup.from_backup_path(file_name)
             for file_name in endpoint.iter_dir(manifest_dir)
         ]
         manifests.sort(key=lambda x:x.timestamp)
         
         if load_file_list:
             # we want the list of files in the manifests.
+            # so have to read it from disk
             return [
-                self._load_manifest(endpoint, m.backup_name)
-                for m in manifests
+                endpoint.read_keyspace(manifest.backup_path)
+                for manifest in manifests
             ]
         # OK to return empty manifests
         return manifests
         
-    def _load_manifest(self, endpoint, backup_name):
-        """Load the :cls:`cassandra.KeyspaceManifest` for the 
+    def _load_manifest_by_name(self, endpoint, backup_name):
+        """Load the :cls:`cassandra.KeyspaceBackup` for the 
         backup with ``backup_name`` using the ``endpoint``.
         """
 
-        empty_manifest = cassandra.KeyspaceManifest.from_backup_name(
+        ks_backup = cassandra.KeyspaceBackup.from_backup_name(
             backup_name)
-        manifest_data = endpoint.read_json(empty_manifest.backup_path)
-        return cassandra.KeyspaceManifest.from_manifest(manifest_data)
+        return endpoint.read_keyspace(ks_backup.backup_path)
 
 class SubCommandWorkerThread(threading.Thread):
     """Base for threads used by sub commands.

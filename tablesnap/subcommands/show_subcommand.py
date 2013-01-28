@@ -21,7 +21,7 @@
 import logging
 import os.path
 
-from tablesnap import dt_util
+from tablesnap import dt_util, file_util
 from tablesnap.subcommands import subcommands
 
 # ============================================================================
@@ -54,19 +54,30 @@ class ShowSubCommand(subcommands.SubCommand):
     def __call__(self):
 
         endpoint = self._endpoint(self.args)
-        manifest = self._load_manifest(endpoint, self.args.backup_name)
+        ks_backup = self._load_manifest_by_name(endpoint, 
+            self.args.backup_name)
 
-        str_builder = ["Backup: %s" % manifest.backup_name]
+        str_builder = ["Backup: %s" % ks_backup.backup_name]
         
         str_builder.append("")
-        str_builder.append("Keyspace: %s:" % (manifest.keyspace,))
-        str_builder.append("Host: %s:" % (manifest.host,))
-        str_builder.append("Timestamp: %s:" % (manifest.timestamp,))
+        str_builder.append("Keyspace: %s:" % (ks_backup.keyspace,))
+        str_builder.append("Host: %s:" % (ks_backup.host,))
+        str_builder.append("Timestamp: %s:" % (ks_backup.timestamp,))
+        total_size = sum(c.stat.size for c in ks_backup.iter_components())
+        str_builder.append("Size: %s / %s" % (total_size, 
+            file_util.human_disk_bytes(total_size)))
         
-        for cf_name, cf_files in manifest.column_families.iteritems():
-            str_builder.append("")
-            str_builder.append("Column Family: %s" % (cf_name,))
-            for cf_file in cf_files:
-                str_builder.append("\t%s" % (cf_file,))
+        last_component = None
+        file_str = []
+        # iterates in order
+        for component in ks_backup.iter_components():
+            if not last_component or (component.cf != last_component.cf):
+                str_builder.append("")
+                str_builder.append("Column Family: %s" % (component.cf,))
+                last_component = component
+            
+            str_builder.append("\t{c.backup_file_name} "\
+                "{c.stat.size}/{human_size}".format(c=component, 
+                human_size=file_util.human_disk_bytes(component.stat.size)))
         
         return (0, "\n".join(str_builder))

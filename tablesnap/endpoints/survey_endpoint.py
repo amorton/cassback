@@ -19,7 +19,7 @@ import json
 import logging
 import os.path
 
-from tablesnap import dt_util, file_util
+from tablesnap import cassandra, dt_util, file_util
 from tablesnap.endpoints import endpoints
 
 
@@ -71,44 +71,44 @@ class SurveyEndpoint(endpoints.EndpointBase):
         file_util.ensure_dir(args.meta_dir)
         return
         
-    def store_with_meta(self, source_path, source_meta, relative_dest_path):
+    def backup_file(self, backup_file):
         """Writes the meta data and upates the survey log."""
         
         msg = self.FILE_OP_PATTERN.format(time=dt_util.now_iso(), 
-            action="stored", src_path=source_path, 
-            dest_path=relative_dest_path, 
-            bytes=file_util.file_size(source_path))
+            action="stored", src_path=backup_file.file_path, 
+            dest_path=backup_file.backup_path, 
+            bytes=backup_file.component.stat.size)
         self.log_file.write(msg)
         self.log_file.flush()
         
-        dest_path = os.path.join(self.args.meta_dir, relative_dest_path)
+        dest_path = os.path.join(self.args.meta_dir, backup_file.backup_path)
         file_util.ensure_dir(os.path.dirname(dest_path))
         with open(dest_path, "w") as f:
-            f.write(json.dumps(source_meta))
+            f.write(json.dumps(backup_file.serialise()))
         return relative_dest_path
 
-    def read_meta(self, relative_path):
+    def read_backup_file(self, path):
 
-        path = os.path.join(self.args.meta_dir, relative_path)
+        path = os.path.join(self.args.meta_dir, path)
         with open(path, "r") as f:
-            return json.loads(f.read())
+            return cassandra.BackupFile.deserialise(json.loads(f.read()))
 
-    def store_json(self, data, relative_dest_path):
+    def backup_keyspace(self, ks_backup):
         
-        dest_path = os.path.join(self.args.meta_dir, relative_dest_path)
+        dest_path = os.path.join(self.args.meta_dir, ks_backup.backup_path)
         file_util.ensure_dir(os.path.dirname(dest_path))
         with open(dest_path, "w") as f:
-            f.write(json.dumps(data))
+            f.write(json.dumps(ks_backup.serialise()))
         return
 
 
-    def restore(self, relative_src_path, dest_path):
+    def restore_file(self, backup_file, dest_prefix):
         
-        src_meta = self.read_meta(relative_src_path)
+        dest_path = os.path.join(dest_prefix, backup_file.restore_path)
         msg = self.FILE_OP_PATTERN.format(time=dt_util.now_iso(), 
-            action="restored", src_path=relative_src_path, 
+            action="restored", src_path=backup_file, 
             dest_path=dest_path, 
-            bytes=src_meta["size"])
+            bytes=backup_file.component.stat.size)
         self.log_file.write(msg)
         self.log_file.flush()
         return
@@ -120,11 +120,11 @@ class SurveyEndpoint(endpoints.EndpointBase):
     def validate_checksum(self, relative_path, expected_md5_hex):
         return True
 
-    def read_json(self, relative_path, ignore_missing=False):
+    def read_keyspace(self, path):
 
-        src_path = os.path.join(self.args.meta_dir, relative_path)
+        src_path = os.path.join(self.args.meta_dir, path)
         with open(src_path, "r") as f:
-            return json.loads(f.read())
+            return cassandra.KeyspaceBackup.deserialise(json.loads(f.read()))
 
     def iter_dir(self, relative_path, include_files=True, 
         include_dirs=False, recursive=False):
@@ -165,8 +165,7 @@ class SurveyEndpoint(endpoints.EndpointBase):
     def remove_file(self, relative_path, dry_run=False):
         
         path = os.path.join(self.args.meta_dir, relative_path)
-        src_meta = self.read_meta(relative_path)
-        size = src_meta.get("size")
+        restore_file = self.read_backup_file(relative_path)
         
         if dry_run:
             return path
@@ -178,7 +177,7 @@ class SurveyEndpoint(endpoints.EndpointBase):
             msg = self.FILE_OP_PATTERN.format(time=dt_util.now_iso(), 
                 action="removed", src_path=relative_path, 
                 dest_path="na", 
-                bytes=size)
+                bytes=restore_file.component.stat.size)
             
             self.log_file.write(msg)
             self.log_file.flush()

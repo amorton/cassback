@@ -21,7 +21,7 @@ import logging
 import os.path
 import shutil
 
-from tablesnap import file_util
+from tablesnap import cassandra, file_util
 from tablesnap.endpoints import endpoints
 
 # ============================================================================ 
@@ -53,51 +53,52 @@ class LocalEndpoint(endpoints.EndpointBase):
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Endpoint Base Overrides 
 
-    def store_with_meta(self, source_path, source_meta, relative_dest_path):
+    def backup_file(self, backup_file):
         
-        dest_path = os.path.join(self.args.backup_base, relative_dest_path)
+        dest_path = os.path.join(self.args.backup_base, 
+            backup_file.backup_path)
         file_util.ensure_dir(os.path.dirname(dest_path))
         
         # Store the actual file
         with endpoints.TransferTiming(self.log, dest_path, 
-            file_util.file_size(source_path)):
-            shutil.copy(source_path, dest_path)
+            backup_file.component.stat.size):
+            shutil.copy(backup_file.file_path, dest_path)
         
         # Store the meta data
         dest_meta_path = dest_path + self._META_SUFFIX
         with open(dest_meta_path, "w") as f:
-            f.write(json.dumps(source_meta))
+            f.write(json.dumps(backup_file.serialise()))
         return dest_path
 
-    def read_meta(self, relative_path):
-
-        dest_path = os.path.join(self.args.backup_base, 
-            relative_path + "-meta.json")
-        file_util.ensure_dir(os.path.dirname(dest_path))
+    def read_backup_file(self, path):
         
+        dest_path = os.path.join(self.args.backup_base, path + "-meta.json")        
         with open(dest_path, "r") as f:
-            return json.loads(f.read())
+            return cassandra.BackupFile.deserialise(json.loads(f.read()))
 
-    def store_json(self, data, relative_dest_path):
+    def backup_keyspace(self, ks_backup):
 
-        dest_path = os.path.join(self.args.backup_base, relative_dest_path)
+        dest_path = os.path.join(self.args.backup_base, ks_backup.backup_path)
         file_util.ensure_dir(os.path.dirname(dest_path))
         
         with open(dest_path, "w") as f:
-            f.write(json.dumps(data))
+            f.write(json.dumps(ks_backup.serialise()))
         return
 
 
-    def restore(self, relative_src_path, dest_path):
+    def restore_file(self, backup_file, dest_prefix):
 
-        src_path = os.path.join(self.args.backup_base, relative_src_path)
+        src_path = os.path.join(self.args.backup_base, 
+            backup_file.backup_path)
+        dest_path = os.path.join(dest_prefix, backup_file.restore_path)
+        file_util.ensure_dir(os.path.dirname(dest_path))
         self.log.debug("Restoring file %(src_path)s to %(dest_path)s" % \
             vars())
         
-        size = os.stat(src_path).st_size
-        with endpoints.TransferTiming(self.log, src_path, size):
+        with endpoints.TransferTiming(self.log, src_path, 
+            backup_file.component.stat.size):
             shutil.copy(src_path, dest_path)
-        return
+        return dest_path
 
     def exists(self, relative_path):
         path = os.path.join(self.args.backup_base, relative_path)
@@ -118,11 +119,11 @@ class LocalEndpoint(endpoints.EndpointBase):
             expected_md5_hex=expected_md5_hex, current_md5=current_md5))
         return False
         
-    def read_json(self, relative_path, ignore_missing=False):
+    def read_keyspace(self, path):
 
-        src_path = os.path.join(self.args.backup_base, relative_path)
+        src_path = os.path.join(self.args.backup_base, path)
         with open(src_path, "r") as f:
-            return json.loads(f.read())
+            return cassandra.KeyspaceBackup.deserialise(json.loads(f.read()))
 
     def iter_dir(self, relative_path, include_files=True, 
         include_dirs=False, recursive=False):

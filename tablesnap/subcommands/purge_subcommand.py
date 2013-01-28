@@ -49,7 +49,7 @@ class PurgeSubCommand(subcommands.SubCommand):
         sub_parser.add_argument("--dry-run", dest="dry_run", default=False,
             action="store_true",
             help="Do not delete any files.")
-        
+            
         purge_group = sub_parser.add_mutually_exclusive_group(required=True)
         purge_group.add_argument("--purge-before",
             dest='purge_before',
@@ -105,19 +105,18 @@ class PurgeSubCommand(subcommands.SubCommand):
         self.log.info("Keeping backups {manifests}".format(manifests=manifests))
         
 
-        # Build a set of the files we want to keep. 
+        # Build a list of the files we want to keep. 
         # We purge everything else so that a failed purge can be fixed.
-        kept_files = set()
+        keep_components = []
         for manifest in manifests:
-            kept_files.update(manifest.yield_file_names())
-        self.log.info("Keeping sstable files: {kept_files}".format(
-            kept_files=kept_files))
+            keep_components.extend(manifest.iter_components())
+        self.log.info("Keeping sstable files: %s", keep_components)
 
         # Step 4 - Purge the manifests
         deleted_files = self._purge_manifests(endpoint, manifests)
 
         # Step 5 - Purge the files that are not referenced from a manifest.
-        deleted_files.extend(self._purge_sstables(endpoint, kept_files))
+        deleted_files.extend(self._purge_sstables(endpoint, keep_components))
 
         str_build = ["Purge backups before {purge_before}".format(
             purge_before=dt_util.to_iso(purge_before))
@@ -178,42 +177,42 @@ class PurgeSubCommand(subcommands.SubCommand):
         self.log.debug("Keeping manifsest paths {keep_paths}".format(
             keep_paths=keep_paths))
                     
-        keyspace_dir = cassandra.KeyspaceManifest.backup_keyspace_dir(
+        keyspace_dir = cassandra.KeyspaceBackup.backup_keyspace_dir(
             self.args.keyspace)
         deleted = []
         for manifest_path in endpoint.iter_dir(keyspace_dir, recursive=True):
             if manifest_path in keep_paths:
-                continue 
-                
-            self.log.debug("Purging manifest file {manifest_path}".format(
-                manifest_path=manifest_path))
-            deleted.append(endpoint.remove_file(manifest_path, 
-                dry_run=self.args.dry_run))
+                self.log.debug("Keeping manifest %s", manifest_path) 
+            else:
+                self.log.debug("Purging manifest %s", manifest_path)
+                deleted.append(endpoint.remove_file(manifest_path, 
+                    dry_run=self.args.dry_run))
         return deleted
 
-    def _purge_sstables(self, endpoint, kept_files):
+    def _purge_sstables(self, endpoint, kept_components):
         """Deletes the sstables for the current keyspace and host
-        that are not listed in ``kept_files``. 
+        that are not listed in ``kept_components``. 
         
         Returns a list of the paths deleted.
         """
         
-        ks_dir = cassandra.CassandraFile.backup_keyspace_dir(self.args.host, 
+        ks_dir = cassandra.BackupFile.backup_keyspace_dir(self.args.host, 
             self.args.keyspace)
         
-        set_kept_files = frozenset(kept_files)
+        set_kept_files = frozenset(
+            component.backup_file_name
+            for component in kept_components
+        )
         
         # Step 3 - delete files not in the keep list.
         deleted_files = []
         for file_path in endpoint.iter_dir(ks_dir, recursive=True):
             _, file_name = os.path.split(file_path)
-            
+
             if file_name in set_kept_files:
-                self.log.debug("Keeping file {file_path}".format(
-                    file_path=file_path))
+                self.log.debug("Keeping file %s", file_path)
             else:
-                self.log.debug("Deleting file {file_path}".format(
-                    file_path=file_path))
+                self.log.debug("Deleting file %s", file_path)
                 deleted_files.append(endpoint.remove_file_with_meta(
                     file_path, dry_run=self.args.dry_run))
         return deleted_files

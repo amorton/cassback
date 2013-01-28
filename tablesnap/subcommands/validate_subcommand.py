@@ -57,40 +57,39 @@ class ValidateSubCommand(subcommands.SubCommand):
         self.log.info("Starting sub command %s" % self.command_name)
 
         endpoint = self._endpoint(self.args)
-        manifest = self._load_manifest(endpoint, self.args.backup_name)
+        manifest = self._load_manifest_by_name(endpoint, 
+            self.args.backup_name)
 
         missing_files = []
         present_files = []
         corrupt_files = []
 
-        for file_name in manifest.yield_file_names():
+        for component in manifest.iter_components():
             
-            cass_file = cassandra.CassandraFile.from_file_path(file_name, 
-                meta={}, host=manifest.host)
-                
-            # Get the stored meta data for the file
+            # Read the backup file
             try:
-                cass_file.meta = endpoint.read_meta(cass_file.backup_path)
+                backup_file = endpoint.read_backup_file(cassandra.BackupFile(
+                    None, component=component, md5="").backup_path)
             except (EnvironmentError) as e:
                 if e.errno != errno.ENOENT:
                     raise
-                # Set null so we know the meta was not found
-                cass_file = None    
+                # Set null so we know the file was not found
+                backup_file = None    
 
-            if cass_file is None:
+            if backup_file is None:
                 # Could not find the meta.
-                missing_files.append(file_name)
-            elif endpoint.exists(cass_file.backup_path):
+                missing_files.append(component)
+            elif endpoint.exists(backup_file.backup_path):
                 # Found the meta, and the file actually exists.
                 if not self.args.checksum:
-                    present_files.append(file_name)
-                elif endpoint.validate_checksum(cass_file.backup_path, 
-                    cass_file.meta["md5_hex"]):
-                    present_files.append(file_name)
+                    present_files.append(component)
+                elif endpoint.validate_checksum(backup_file.backup_path, 
+                    backup_file.md5):
+                    present_files.append(component)
                 else:
-                    corrupt_files.append(file_name)
+                    corrupt_files.append(component)
             else:
-                missing_files.append(file_name)
+                missing_files.append(component)
 
         buffer = []
         if missing_files or corrupt_files:
@@ -109,15 +108,24 @@ class ValidateSubCommand(subcommands.SubCommand):
 
         if corrupt_files:
             buffer.append("Corrupt Files:")
-            buffer.extend(corrupt_files)
+            buffer.extend(
+                component.file_name
+                for component in corrupt_files
+            )
 
         if missing_files:
             buffer.append("Missing Files:")
-            buffer.extend(missing_files)
+            buffer.extend(
+                component.file_name
+                for component in missing_files
+            )
 
         if present_files:
             buffer.append("Files:")
-            buffer.extend(present_files)
+            buffer.extend(
+                component.file_name
+                for component in present_files
+            )
 
         self.log.info("Finished sub command %s" % self.command_name)
         return (
