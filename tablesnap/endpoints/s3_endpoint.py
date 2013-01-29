@@ -27,6 +27,7 @@ import boto
 from boto.s3 import key as s3_key
 from boto.s3 import prefix as s3_prefix
 
+from tablesnap import cassandra, file_util
 from tablesnap.endpoints import endpoints
 
 # ============================================================================ 
@@ -313,16 +314,20 @@ class S3Endpoint(endpoints.EndpointBase):
                 if key.find("|") > -1:
                     raise ValueError("Key cannot contain a '|' char, got "\
                         "{key}".format(key=key))
-                fq_key = "{context}|{key}".format(context=context or "", 
-                    key=key)
+                fq_key = "{context}{sep}{key}".format(context=context or "", 
+                    sep="|" if context else "", key=key)
             else:
-                fq_key = None
+                fq_key = ""
+
             if isinstance(value, dict):
-                return add_meta(meta, key, value, 
-                    context=fq_key)
+                for k, v in value.iteritems():
+                    meta = add_meta(meta, k, v, context=fq_key)
+                return meta
+                
             elif isinstance(value, basestring):
                 assert fq_key
                 meta[fq_key] = value
+                return meta
             else:
                 raise ValueError("All values must be string or dict, got "\
                     "{cls} for {key}".format(cls=type(value), key=key))
@@ -341,7 +346,7 @@ class S3Endpoint(endpoints.EndpointBase):
                 data[key] = value
                 return
             # we have another level of dict
-            data = data.setdefault(key, {})
+            data = data.setdefault(head, {})
             set_value(data, tail, value)
             return
             

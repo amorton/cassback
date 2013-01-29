@@ -86,7 +86,7 @@ def arg_parser():
         dest="cassandra_version", 
         help="Cassandra version to backup from or restore to.")
 
-    main_parser.add_argument("--log-level", default="DEBUG", 
+    main_parser.add_argument("--log-level", default="INFO", 
         dest="log_level", 
         choices=["FATAL", "CRITICAL", "ERROR", "WARN", "INFO", "DEBUG"],
         help="Logging level.")
