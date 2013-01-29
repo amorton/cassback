@@ -302,15 +302,10 @@ class WatchdogWatcher(events.FileSystemEventHandler):
     # Watchdog file events.
 
     def on_created(self, event):
-        print "on_created", event
         self._maybe_queue_file(event.src_path)
         return
 
     def on_moved(self, event):
-        print "on_moved", event
-        
         self._maybe_queue_file(event.dest_path)
         return
     
-    def on_deleted(self, event):
-        print "on_deleted", event
