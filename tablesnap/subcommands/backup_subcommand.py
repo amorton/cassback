@@ -19,6 +19,7 @@ import argparse
 import copy
 import datetime
 import errno
+import json
 import logging
 import os
 import os.path
@@ -90,7 +91,7 @@ class BackupSubCommand(subcommands.SubCommand):
         return sub_parser
 
     def __call__(self):
-        self.log.info("Starting sub command %s" % self.command_name)
+        self.log.info("Starting sub command %s", self.command_name)
         
         # Make a queue, we put the files that need to be backed up here.
         file_q = Queue.Queue()
@@ -117,7 +118,7 @@ class BackupSubCommand(subcommands.SubCommand):
         # Start the watcher
         watcher.start()
 
-        self.log.info("Finished sub command %s" % self.command_name)
+        self.log.info("Finished sub command %s", self.command_name)
         
         # There is no message to call. Assume the process has been running 
         # for a while.
@@ -144,15 +145,20 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         endpoint = self._endpoint(self.args)
         while True:
             # blocking call
-            ks_backup, component = self.file_q.get()
+            ks_backup_json, component_json = self.file_q.get()
+            ks_backup = cassandra.KeyspaceBackup.deserialise(json.loads(
+                ks_backup_json))
+            component = cassandra.SSTableComponent.deserialise(json.loads(
+                component_json))
+
             try:
                 self._run_internal(endpoint, ks_backup, component)
             except (EnvironmentError) as e:
                 if not(e.errno == errno.ENOENT and \
                     e.filename==component.file_path):
                     raise
-                self.log.info("Aborted uploading %s as it was removed" %\
-                    (component,))
+                self.log.info("Aborted uploading %s as it was removed", 
+                    component)
             self.file_q.task_done()
         return
 
@@ -164,8 +170,13 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         Returns `True` if the file was uploaded, `False` otherwise.
         """
 
-        self.log.info("Uploading file %s" % (component,))
+        self.log.info("Uploading file %s", component)
         
+        if component.is_deleted:
+            endpoint.backup_keyspace(ks_backup)
+            self.log.info("Uploaded backup set %s after deletion of %s", 
+                ks_backup.backup_path, component)
+
         # Create a BackupFile, this will have checksums 
         backup_file = cassandra.BackupFile(component.file_path, 
             host=self.args.host, component=component)
@@ -174,19 +185,19 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         if endpoint.exists(backup_file.backup_path):
             if endpoint.validate_checksum(backup_file.backup_path, 
                 backup_file.md5):
-                
+            
                 self.log.info("Skipping file %s skipping as there is a "\
-                    "valid backup"% (backup_file,))
+                    "valid backup", backup_file)
             else:
                 self.log.warn("Possibly corrupt file %s in the backup, "\
-                    "skipping." % (backup_file,))
+                    "skipping.", backup_file)
             return False
-        
+    
         uploaded_path = endpoint.backup_file(backup_file)
         endpoint.backup_keyspace(ks_backup)
         
-        self.log.info("Uploaded file %s to %s" % (backup_file.file_path, 
-            uploaded_path))
+        self.log.info("Uploaded file %s to %s", backup_file.file_path, 
+            uploaded_path)
         return True
 
 class SnapReporterThread(subcommands.SubCommandWorkerThread):
@@ -206,7 +217,7 @@ class SnapReporterThread(subcommands.SubCommandWorkerThread):
             size = self.file_q.qsize()
             if size > 0 or (size != last_size):
                 self.log.info("Backup worker queue contains %s items "\
-                    "(does not include tasks in progress)" % (size),)
+                    "(does not include tasks in progress)", size)
             last_size = size
             time.sleep(self.interval)
         return
@@ -240,8 +251,7 @@ class WatchdogWatcher(events.FileSystemEventHandler):
 
         observer = observers.Observer()
         observer.schedule(self, path=self.data_dir, recursive=True)
-        self.log.info("Watching for new file under %(data_dir)s." %\
-            vars(self))
+        self.log.info("Watching for new file under %s", self.data_dir)
 
         observer.start()
         try:
@@ -258,44 +268,44 @@ class WatchdogWatcher(events.FileSystemEventHandler):
     def _maybe_queue_file(self, file_path):
         
         if cassandra.is_snapshot_path(file_path):
-            self.log.info("Ignoring snapshot path %(file_path)s" % vars())
+            self.log.info("Ignoring snapshot path %s", file_path)
             return False
 
         try:
             component = cassandra.SSTableComponent(file_path)
         except (ValueError):
-            self.log.info("Ignoring non Cassandra file %(file_path)s" % \
-                vars())
+            self.log.info("Ignoring non Cassandra file %s", file_path)
             return False
         except (EnvironmentError) as e:
             if e.errno == errno.ENOENT:
-                self.log.info("Ignoring missing file %(file_path)s" % \
-                    vars())
+                self.log.info("Ignoring missing file %s", file_path)
                 return False
             else:
                 raise
 
         if component.temporary:
-            self.log.info("Ignoring temporary file %(file_path)s" % vars())
+            self.log.info("Ignoring temporary file %s", file_path)
             return False
 
         if component.keyspace in self.exclude_keyspaces:
             self.log.info("Ignoring file %s from excluded "\
-                "keyspace %s" % (file_path, component.keyspace))
+                "keyspace %s", file_path, component.keyspace)
             return False
 
         if (component.keyspace.lower() == "system") and (
             not self.include_system_keyspace):
 
-            self.log.info("Ignoring system keyspace file %(file_path)s"\
-                % vars())
+            self.log.info("Ignoring system keyspace file %s", file_path)
             return False
 
         ks_backup = cassandra.KeyspaceBackup(self.data_dir, 
             component.keyspace)
-        self.log.info("Queueing file %(file_path)s"\
-            % vars())
-        self.file_queue.put((ks_backup, component))
+        self.log.info("Queueing file %s", file_path)
+        msg = (
+            json.dumps(ks_backup.serialise()), 
+            json.dumps(component.serialise())
+        )
+        self.file_queue.put(msg)
         return True
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -309,3 +319,36 @@ class WatchdogWatcher(events.FileSystemEventHandler):
         self._maybe_queue_file(event.dest_path)
         return
     
+    def on_deleted(self, event):
+        
+        # Deletes happen quickly when compaction completes. 
+        # Rather than do a backup for each file we only backup when 
+        # a -Data.db component is deleted. 
+        
+        file_path = event.src_path
+        if cassandra.is_snapshot_path(file_path):
+            self.log.info("Ignoring deleted snapshot path %s", file_path)
+            return
+            
+        try:
+            component = cassandra.SSTableComponent(file_path, is_deleted=True)
+        except (ValueError):
+            self.log.info("Ignoring deleted non Cassandra file %s", file_path)
+            return
+        
+        if component.component != cassandra.Components.DATA:
+            self.log.info("Ignoring deleted non %s component %s", 
+                cassandra.Components.DATA, file_path)
+            return
+        # We want to do a backup so we know this sstable was removed. 
+        ks_backup = cassandra.KeyspaceBackup(self.data_dir, 
+            component.keyspace, ignore_sstable=component)
+        self.log.info("Queuing backup after deletion of %s", file_path)
+        
+        msg = (
+            json.dumps(ks_backup.serialise()), 
+            json.dumps(component.serialise())
+        )
+        self.file_queue.put(msg)
+        return
+        

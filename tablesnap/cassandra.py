@@ -38,6 +38,8 @@ class Components(object):
     COMPRESSION_INFO = "CompressionInfo.db"
     STATS = "Statistics.db"
     DIGEST = "Digest.sha1"
+    SUMMARY = "Summary.db"
+    TOC = "TOC.txt"
 
 COMPACTED_MARKER = "Compacted"
 """Marker added to compacted files."""
@@ -191,7 +193,28 @@ class FileStat(object):
         log.debug("For {file_path} got meta {file_meta} ".format(
             file_path=file_path, file_meta=file_meta))
         return file_meta
+
+
+class DeletedFileStat(FileStat):
+    """File stats for a deleted file.
     
+    Does not extract any data from disk. 
+    """
+    log = logging.getLogger("%s.%s" % (__name__, "DeletedFileStat"))
+    
+    def __init__(self, file_path):
+        super(DeletedFileStat, self).__init__(file_path)
+    
+    def _extract_meta(self, file_path):
+        return {
+            "uid" : 0,
+            "user" : None,
+            "gid" : 0,
+            "group" : None,
+            "mode" : 0,
+            "size" : 0
+        }
+        
 class SSTableComponent(object):
     """Meta data about a component file for an SSTable.
     
@@ -200,7 +223,8 @@ class SSTableComponent(object):
     log = logging.getLogger("%s.%s" % (__name__, "SSTableComponent"))
     
     def __init__(self, file_path, keyspace=None, cf=None, version=None, 
-        generation=None, component=None, temporary=None, stat=None):
+        generation=None, component=None, temporary=None, stat=None, 
+        is_deleted=False):
         
         def props(): 
             try:
@@ -219,7 +243,15 @@ class SSTableComponent(object):
             else component
         self.temporary = props()["temporary"] if temporary is None \
             else temporary
-        self.stat = FileStat(file_path) if stat is None else stat
+        
+        self.is_deleted = is_deleted
+        if stat is None:
+            if self.is_deleted:
+                self.stat = DeletedFileStat(file_path)
+            else:
+                self.stat = FileStat(file_path)
+        else:
+            self.stat = stat
     
     def __str__(self):
         return "SSTableComponent for {file_path}: keyspace {keyspace}, "\
@@ -237,7 +269,8 @@ class SSTableComponent(object):
             "generation" : str(self.generation),
             "component" : self.component, 
             "temporary" : str(self.temporary), 
-            "stat" : self.stat.serialise()
+            "stat" : self.stat.serialise(), 
+            "is_deleted" : "true" if self.is_deleted else "false"
         }
 
     
@@ -249,7 +282,8 @@ class SSTableComponent(object):
             cf=data["cf"], version=data["version"], 
             generation=int(data["generation"]), component=data["component"], 
             temporary=True if data["temporary"].lower() == "true" else False, 
-            stat=FileStat.deserialise(data["stat"]))
+            stat=FileStat.deserialise(data["stat"]),
+            is_deleted=True if data["is_deleted"] == "true" else False)
             
     def _component_properties(self, file_path):
         """Parses ``file_path`` to extact the component tokens.
@@ -411,7 +445,18 @@ class SSTableComponent(object):
 
         raise ValueError("Unknown file format {version}".format(
             version=self.version))
-            
+    
+    def same_sstable(self, other):
+        """Returns ``True`` if the ``other`` :cls:`SSTableComponent` 
+        is from the same SSTable as this. 
+        """
+        
+        if other is None:
+            return False
+        
+        return (other.keyspace == self.keyspace) and (other.cf == self.cf) and (
+            other.version == self.version) and (
+            other.generation == self.generation)
 
 
 # ============================================================================
@@ -563,7 +608,7 @@ class KeyspaceBackup(object):
     log = logging.getLogger("%s.%s" % (__name__, "KeyspaceBackup"))
 
     def __init__(self, data_dir, keyspace, host=None, timestamp=None, 
-        backup_name=None, ks_files=None):
+        backup_name=None, ks_files=None, ignore_sstable=None):
         
         self.keyspace = keyspace
         self.host = host or socket.getfqdn()
@@ -573,7 +618,8 @@ class KeyspaceBackup(object):
             keyspace=keyspace, host=self.host)
         
         if ks_files is None and data_dir:
-            self.ks_files = self._list_files(data_dir, keyspace) 
+            self.ks_files = self._list_files(data_dir, keyspace, 
+                ignore_sstable=ignore_sstable) 
         else:
             self.ks_files = ks_files
             
@@ -604,9 +650,12 @@ class KeyspaceBackup(object):
             timestamp=dt_util.from_iso(data["timestamp"]), 
             backup_name=data["name"], ks_files=files)
             
-    def _list_files(self, data_dir, keyspace):
+    def _list_files(self, data_dir, keyspace, ignore_sstable=None):
         """Gets a list of all sstable components in the ``keyspace`` under 
         the ``data_dir``.
+        
+        ``ignore_sstable`` is a :cls:`SSTableComponent`. If specified all 
+        components from the same SSTable are ignored. 
         
         Returns a dict of {cf : [SSTableComponent,]}
         """
@@ -652,9 +701,13 @@ class KeyspaceBackup(object):
                 if e.errno == errno.ENOENT:
                     self.log.info("Ignoring missing file %s", file_path)
             else:
-                if not component.temporary:
-                    ks_files.setdefault(component.cf, []).append(
-                        component)
+                if component.temporary:
+                    self.log.debug("Ignoring temporary file %s", file_path)
+                elif component.same_sstable(ignore_sstable):
+                     self.log.debug("Ignoring file %s from ignore sstable %s",
+                        file_path, ignore_sstable)
+                else:
+                    ks_files.setdefault(component.cf, []).append(component)
         return ks_files
    
     @classmethod
