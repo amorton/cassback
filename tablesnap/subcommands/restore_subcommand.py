@@ -221,7 +221,8 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
             # where it is stored and where it will backup to 
             # we also want the MD5, that is on disk
             backup_file = endpoint.read_backup_file(cassandra.BackupFile(
-                None, component=component, md5="").backup_path)
+                None, component=component, md5="", 
+                host=self.args.host).backup_path)
                 
             # Restore the file if we want to
             should_restore, reason = self._should_restore(backup_file, 

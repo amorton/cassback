@@ -69,7 +69,8 @@ class ValidateSubCommand(subcommands.SubCommand):
             # Read the backup file
             try:
                 backup_file = endpoint.read_backup_file(cassandra.BackupFile(
-                    None, component=component, md5="").backup_path)
+                    None, component=component, md5="", 
+                    host=manifest.host).backup_path)
             except (EnvironmentError) as e:
                 if e.errno != errno.ENOENT:
                     raise
