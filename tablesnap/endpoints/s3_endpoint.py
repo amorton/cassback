@@ -217,7 +217,7 @@ class S3Endpoint(endpoints.EndpointBase):
             return True
             
         self.log.warn("Backup file %s does not match expected md5 "\
-            "%s, got %s", key_name, expected_hash, current_md5)
+            "%s, got %s", key_name, expected_hash, key_md5 or key_etag)
         return False
 
     def iter_dir(self, relative_path, include_files=True, 
