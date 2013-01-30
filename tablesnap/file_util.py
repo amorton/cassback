@@ -36,7 +36,8 @@ def file_md5(file_path):
     finally:
         fp.close()
     duration_ms = (time.time() * 10**3) - start_ms
-    log.debug("Calculated hash %s for %s in %s ms", md5, file_path, ms)
+    log.debug("Calculated hash %s for %s in %s ms", md5, file_path, 
+        duration_ms)
     return md5
 
 def ensure_dir(path):
