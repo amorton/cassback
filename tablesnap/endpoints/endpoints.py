@@ -42,7 +42,7 @@ def create_from_args(args):
         if endpoint_class.name == endpoint_name:
             return endpoint_class(args)
 
-    raise RuntimeError("Unknown endpoint name %(endpoint_name)s" % vars())
+    raise RuntimeError("Unknown endpoint name %s" % (endpoint_name,))
 
 def validate_args(args):
 
@@ -54,7 +54,7 @@ def validate_args(args):
             endpoint_class.validate_args(args)
             return
 
-    raise RuntimeError("Unknown endpoint name %(endpoint_name)s" % vars())
+    raise RuntimeError("Unknown endpoint name %s" % (endpoint_name,))
 
 
 # ============================================================================ 

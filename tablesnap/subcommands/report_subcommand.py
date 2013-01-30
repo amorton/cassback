@@ -164,7 +164,7 @@ class SurveyReportSubCommand(subcommands.SubCommand):
                 elif op == "removed":
                     hour.decr_bytes(bytes)
                 else:
-                    raise RuntimeError("Unknown operation {op}".format(op=op))
+                    raise RuntimeError("Unknown operation %s" % (op,))
         return hours
 
     def _extrapolate_hours(self, hours):

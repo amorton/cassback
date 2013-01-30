@@ -84,14 +84,11 @@ class PurgeSubCommand(subcommands.SubCommand):
         purge_before = self._calc_purge_before()
         # list of full or partial days to keep
         manifest_days = self._manifest_days(purge_before)
-        self.log.info("To purge backups older then {purge_before} will read "\
-            " manifests from {manifest_days}".format(
-            purge_before=purge_before, manifest_days=manifest_days))
-        
+        self.log.info("To purge backups older then %s will read "\
+            " manifests from %s", purge_before, manifest_days)
         
         # Read the manifests we want to keep. 
-        self.log.debug("Reading manifests after {purge_before} to "\
-            "keep.".format(purge_before=purge_before))
+        self.log.debug("Reading manifests after %s to keep.", purge_before)
         manifests = []
         for manifest_day in manifest_days:
             for manifest in self._list_manifests(endpoint, 
@@ -100,9 +97,8 @@ class PurgeSubCommand(subcommands.SubCommand):
                 if manifest.timestamp >= purge_before:
                     manifests.append(manifest)
                 else:
-                    self.log.debug("Will not keep manifest {manifest}".format(
-                        manifest=manifest))
-        self.log.info("Keeping backups {manifests}".format(manifests=manifests))
+                    self.log.debug("Will not keep manifest %s", manifest)
+        self.log.info("Keeping backups %s", manifests)
         
 
         # Build a list of the files we want to keep. 

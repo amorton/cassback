@@ -137,7 +137,7 @@ class SubCommandWorkerThread(threading.Thread):
     def __init__(self, name, thread_id):
         super(SubCommandWorkerThread, self).__init__()
 
-        self.name = "%(name)s-%(thread_id)s" % vars()
+        self.name = "%s-%s" % (name, thread_id)
         self.daemon = True
 
         self.kill_on_error = True

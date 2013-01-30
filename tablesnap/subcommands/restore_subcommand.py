@@ -93,19 +93,19 @@ class RestoreSubCommand(subcommands.SubCommand):
                 pwd.getpwnam(args.owner)
             except (KeyError):
                 raise argparse.ArgumentError(args.user, 
-                    "Unknown user {user}".format(user=args.owner))
+                    "Unknown user %s" % (user,))
         
         if args.group and not args.no_chown:
             try:
                 grp.getgrnam(args.group)
             except (KeyError):
                 raise argparse.ArgumentError(args.group, 
-                    "Unknown group {group}".format(group=group))
+                    "Unknown group %s" % (group,))
         return 
         
     def __call__(self):
 
-        self.log.info("Starting sub command %s" % self.command_name)
+        self.log.info("Starting sub command %s", self.command_name)
 
         endpoint = self._endpoint(self.args)
         manifest = self._load_manifest_by_name(endpoint, 
@@ -143,7 +143,7 @@ class RestoreSubCommand(subcommands.SubCommand):
         # Wait for the work queue to empty. 
         self.log.info("Waiting on workers.")
         work_queue.join()
-        self.log.info("Finished sub command %s" % self.command_name)
+        self.log.info("Finished sub command %s", self.command_name)
 
         # Make a pretty message 
         buffer = ["Restored files:"]
@@ -294,8 +294,8 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
             gid = grp.getgrnam(group).gr_gid
         
         if self.log.isEnabledFor(logging.DEBUG):
-            self.log.debug("chown'ing {restore_path} to {user}/{uid} and "\
-                "{group}/{gid}".format(**vars()))
+            self.log.debug("chown'ing %s to %s/%s and %s/%s", restore_path, 
+                user, uid, group, gid)
         os.chown(restore_path, uid, gid)
         return
 

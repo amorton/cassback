@@ -27,8 +27,7 @@ def file_size(file_path):
 
 def file_md5(file_path):
     """Returns a string Hex md5 digest for the file at ``file_path``."""
-    log.debug("Calculating md5 for %(file_path)s", 
-        {"file_path" : file_path})
+    log.debug("Calculating md5 for %s", file_path)
     start_ms = time.time() * 10**3
     fp = open(file_path, 'rb')
     try:
@@ -37,8 +36,7 @@ def file_md5(file_path):
     finally:
         fp.close()
     duration_ms = (time.time() * 10**3) - start_ms
-    log.debug("Calculated hash %(md5)s for %(file_path)s in %(ms)s ms", 
-        {"md5":md5, "file_path":file_path, "ms":duration_ms})
+    log.debug("Calculated hash %s for %s in %s ms", md5, file_path, ms)
     return md5
 
 def ensure_dir(path):

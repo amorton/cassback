@@ -65,7 +65,7 @@ class ListSubCommand(subcommands.SubCommand):
         
     def __call__(self):
 
-        self.log.info("Starting sub command %s" % self.command_name)
+        self.log.info("Starting sub command %s", self.command_name)
         
         endpoint = self._endpoint(self.args)
         manifests = self._list_manifests(endpoint, self.args.keyspace,
@@ -88,6 +88,6 @@ class ListSubCommand(subcommands.SubCommand):
         else:
             buffer.append("None")
             
-        self.log.info("Finished sub command %s" % self.command_name)
+        self.log.info("Finished sub command %s", self.command_name)
         return (0, "\n".join(buffer)) 
 

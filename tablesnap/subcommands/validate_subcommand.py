@@ -54,7 +54,7 @@ class ValidateSubCommand(subcommands.SubCommand):
 
     def __call__(self):
 
-        self.log.info("Starting sub command %s" % self.command_name)
+        self.log.info("Starting sub command %s", self.command_name)
 
         endpoint = self._endpoint(self.args)
         manifest = self._load_manifest_by_name(endpoint, 
@@ -128,7 +128,7 @@ class ValidateSubCommand(subcommands.SubCommand):
                 for component in present_files
             )
 
-        self.log.info("Finished sub command %s" % self.command_name)
+        self.log.info("Finished sub command %s", self.command_name)
         return (
             0 if not missing_files and not corrupt_files else 1,
             "\n".join(buffer)

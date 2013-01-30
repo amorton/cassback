@@ -75,7 +75,7 @@ def set_version(ver):
         TARGET_VERSION = tuple(int(i) for i in ver.split(".")[:3])  
     else:
         TARGET_VERSION = ver
-    log.info("Cassandra version changed to {ver}".format(ver=TARGET_VERSION))
+    log.info("Cassandra version changed to %s", TARGET_VERSION)
     return
     
 # ============================================================================
@@ -100,8 +100,8 @@ def is_snapshot_path(file_path):
     """
     head = os.path.dirname(file_path or "")
     if not head:
-        raise ValueError("file_path {file_path} does not include "\
-            "directory".format(file_path=file_path))
+        raise ValueError("file_path %s does not include directory" % (
+            file_path,))
     while head != "/":
         head, tail = os.path.split(head)
         if tail == "snapshots":
@@ -303,8 +303,8 @@ class SSTableComponent(object):
             try:
                 return tokens.pop(0)
             except (IndexError):
-                raise ValueError("Not a valid SSTable file path "\
-                    "{file_path}".format(file_path=file_path))
+                raise ValueError("Not a valid SSTable file path %s" % (
+                    file_path,))
         def peek():
             """Peeks the tokens. 
             Expected a token to be there.
@@ -312,8 +312,8 @@ class SSTableComponent(object):
             try:
                 return tokens[0]
             except (IndexError):
-                raise ValueError("Not a valid SSTable file path "\
-                    "{file_path}".format(file_path=file_path))
+                raise ValueError("Not a valid SSTable file path %s" % (
+                    file_path,))
         
         properties = {
             "keyspace" :  pop() if TARGET_VERSION >= (1,1,0) else None,
@@ -625,10 +625,10 @@ class KeyspaceBackup(object):
             
     def serialise(self):
         """Return manifest that desribes the backup set."""
-        files = {
-            key : [component.serialise() for component in value]
+        files = dict(
+            (key, [component.serialise() for component in value])
             for key, value in self.ks_files.iteritems()
-        }
+        )
         return {
             "host" : self.host,
             "keyspace" : self.keyspace,
@@ -642,10 +642,10 @@ class KeyspaceBackup(object):
         """Create an instance from the ``data`` dict. """
         
         assert data
-        files = {
-            key : [SSTableComponent.deserialise(comp) for comp in value]
+        files = dict(
+            (key, [SSTableComponent.deserialise(comp) for comp in value])
             for key, value in data["ks_files"].iteritems() 
-        }
+        )
         return cls(None, data["keyspace"], host=data["host"], 
             timestamp=dt_util.from_iso(data["timestamp"]), 
             backup_name=data["name"], ks_files=files)

@@ -92,8 +92,7 @@ class LocalEndpoint(endpoints.EndpointBase):
             backup_file.backup_path)
         dest_path = os.path.join(dest_prefix, backup_file.restore_path)
         file_util.ensure_dir(os.path.dirname(dest_path))
-        self.log.debug("Restoring file %(src_path)s to %(dest_path)s" % \
-            vars())
+        self.log.debug("Restoring file %s to %s", src_path, dest_path)
         
         with endpoints.TransferTiming(self.log, src_path, 
             backup_file.component.stat.size):
@@ -109,14 +108,12 @@ class LocalEndpoint(endpoints.EndpointBase):
 
         current_md5 = file_util.file_md5(path)
         if current_md5 == expected_md5_hex:
-            self.log.debug("Backup file {path} matches expected md5 "\
-                "{expected_md5_hex}".format(path=path, 
-                expected_md5_hex=expected_md5_hex))
+            self.log.debug("Backup file %s matches expected md5 "\
+                "%s", path, expected_md5_hex)
             return True
             
-        self.log.warn("Backup file {path} does not match expected md5 "\
-            "{expected_md5_hex}, got {current_md5}".format(path=path, 
-            expected_md5_hex=expected_md5_hex, current_md5=current_md5))
+        self.log.warn("Backup file %s does not match expected md5 "\
+            "%s, got %s", path, expected_md5_hex, current_md5)
         return False
         
     def read_keyspace(self, path):

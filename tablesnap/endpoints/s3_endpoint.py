@@ -106,13 +106,13 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = path
         fqn = self._fqn(key_name)
 
-        self.log.debug("Starting to read meta for key %(fqn)s " % vars())
+        self.log.debug("Starting to read meta for key %s ", fqn)
       
         key = self.bucket.get_key(key_name)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
         
-        self.log.debug("Finished reading meta for key %(fqn)s " % vars())
+        self.log.debug("Finished reading meta for key %s ", fqn)
         return cassandra.BackupFile.deserialise(self._aws_meta_to_dict(
             key.metadata))
 
@@ -121,7 +121,7 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = ks_backup.backup_path
         fqn = self._fqn(key_name)
         
-        self.log.debug("Starting to store json to %(fqn)s" % vars())
+        self.log.debug("Starting to store json to %s", fqn)
         
         # TODO: Overwrite ? 
         key = self.bucket.new_key(key_name)
@@ -132,7 +132,7 @@ class S3Endpoint(endpoints.EndpointBase):
             headers={'Content-Type': 'application/json'}, 
             cb=timing.progress, num_cb=timing.num_callbacks)
 
-        self.log.debug("Finished storing json to %(fqn)s" % vars())
+        self.log.debug("Finished storing json to %s", fqn)
         return 
         
 
@@ -141,7 +141,7 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = path
         fqn = self._fqn(key_name)
         
-        self.log.debug("Starting to read json from %(fqn)s" % vars())
+        self.log.debug("Starting to read json from %s", fqn)
         
         key = self.bucket.get_key(key_name)
         if key is None:
@@ -149,7 +149,7 @@ class S3Endpoint(endpoints.EndpointBase):
         timing = endpoints.TransferTiming(self.log, fqn, 0)
         data = json.loads(key.get_contents_as_string(cb=timing.progress, 
             num_cb=timing.num_callbacks))
-        self.log.debug("Finished reading json from %(fqn)s" % vars())
+        self.log.debug("Finished reading json from %s", fqn)
         
         return cassandra.KeyspaceBackup.deserialise(data)
         
@@ -161,8 +161,7 @@ class S3Endpoint(endpoints.EndpointBase):
         fqn = self._fqn(key_name)
         dest_path = os.path.join(dest_prefix, backup_file.restore_path)
         file_util.ensure_dir(os.path.dir(dest_path))
-        self.log.debug("Starting to restore from %(fqn)s to %(dest_path)s" \
-            % vars())
+        self.log.debug("Starting to restore from %s to %s", fqn, dest_path)
         
         key = self.bucket.get_key(key_name)
         if key is None:
@@ -182,7 +181,7 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = relative_path
         fqn = self._fqn(key_name)
         
-        self.log.debug("Checking if key %(fqn)s exists" % vars())
+        self.log.debug("Checking if key %s exists", fqn)
         key = self.bucket.get_key(key_name)
         return False if key is None else True 
             
@@ -195,12 +194,12 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = relative_path
         fqn = self._fqn(key_name)
 
-        self.log.debug("Starting to validate checkum for %(fqn)s" % vars())
+        self.log.debug("Starting to validate checkum for %s", fqn)
             
         key = self.bucket.get_key(key_name)
         if key == None: 
-            self.log.debug("Key %(fqn)s does not exist, is checksum is "\
-                "invalid" % vars())
+            self.log.debug("Key %s does not exist, so checksum is invalid", 
+                fqn)
             return False
 
         # original checked size, not any more.
@@ -209,19 +208,16 @@ class S3Endpoint(endpoints.EndpointBase):
             hash_match = expected_hash == key_md5
         else:
             key_etag = key.etag.strip('"')
-            self.log.info("Missing md5 meta data for {key_name} using "\
-                "etag".format(key_name=key_name))
+            self.log.info("Missing md5 meta data for %s using etag", key_name)
             hash_match = expected_hash == key_etag
         
         if hash_match:
-            self.log.debug("Backup file {key_name} matches expected md5 "\
-                "{expected_hash}".format(key_name=key_name, 
-                expected_hash=expected_hash))
+            self.log.debug("Backup file %s matches expected md5 %s", 
+                key_name, expected_hash)
             return True
             
-        self.log.warn("Backup file {key_name} does not match expected md5 "\
-            "{expected_hash}, got {current_md5}".format(key_name=key_name, 
-            expected_hash=expected_hash, current_md5=key_md5 or key_etag))
+        self.log.warn("Backup file %s does not match expected md5 "\
+            "%s, got %s", key_name, expected_hash, current_md5)
         return False
 
     def iter_dir(self, relative_path, include_files=True, 
@@ -232,7 +228,7 @@ class S3Endpoint(endpoints.EndpointBase):
             key_name = key_name + "/"
         fqn = self._fqn(key_name)
         
-        self.log.debug("Starting to iterate the dir for %(fqn)s" % vars())
+        self.log.debug("Starting to iterate the dir for %s", fqn)
         
         if include_files and not include_dirs and not recursive:
             # easier, we just want to list the keys. 
@@ -276,16 +272,16 @@ class S3Endpoint(endpoints.EndpointBase):
         if dry_run:
             return key_name
             
-        self.log.debug("Starting to delete key %(key_name)s in "\
-            "%(bucket_name)s" % vars())
+        self.log.debug("Starting to delete key %s in %s", key_name, 
+            bucket_name)
         
         key = self.bucket.get_key(key_name)
-        assert key is not None, "Cannot delete missing key %s" % key_name
+        assert key is not None, "Cannot delete missing key %s" % (key_name,)
             
         key.delete()
 
-        self.log.debug("Finished deleting from %(key_name)s in "\
-            "%(bucket_name)s" % vars())
+        self.log.debug("Finished deleting from %s in %s", key_name, 
+            bucket_name)
         return key_name
 
     def remove_file_with_meta(self, relative_path, dry_run=False):
@@ -313,7 +309,7 @@ class S3Endpoint(endpoints.EndpointBase):
             if key:
                 if key.find("|") > -1:
                     raise ValueError("Key cannot contain a '|' char, got "\
-                        "{key}".format(key=key))
+                        "%s" % (key,))
                 fq_key = "{context}{sep}{key}".format(context=context or "", 
                     sep="|" if context else "", key=key)
             else:
@@ -330,11 +326,10 @@ class S3Endpoint(endpoints.EndpointBase):
                 return meta
             else:
                 raise ValueError("All values must be string or dict, got "\
-                    "{cls} for {key}".format(cls=type(value), key=key))
+                    "%s for %s" % (type(value), key))
     
         aws_meta = add_meta({}, None, data)
-        self.log.debug("Converted data {data} to aws_meta {aws_meta}".format(
-            data=data, aws_meta=aws_meta))
+        self.log.debug("Converted data %s to aws_meta %s", data, aws_meta)
         return aws_meta
         
     def _aws_meta_to_dict(self, aws_meta):
@@ -366,8 +361,8 @@ class S3Endpoint(endpoints.EndpointBase):
     def _do_multi_part_upload(self, backup_file):
         
         fqn = self._fqn(backup_file.backup_path)
-        self.log.debug("Starting multi part upload of %(backup_file)s to "\
-            "%(fqn)s" % vars())
+        self.log.debug("Starting multi part upload of %s to %s", backup_file, 
+            fqn)
         # All meta tags must be strings
         metadata = self._dict_to_aws_meta(backup_file.serialise())
         mp = self.bucket.initiate_multipart_upload(backup_file.file_path, 
@@ -381,7 +376,7 @@ class S3Endpoint(endpoints.EndpointBase):
             for part, chunk in enumerate(self._chunk_file(
                 backup_file.file_path),1):
                 
-                self.log.debug("Uploading part %(part)s with" % vars())
+                self.log.debug("Uploading part %s", part)
                 try:
                     mp.upload_part_from_file(chunk, part, cb=timing.progress, 
                         num_cb=timing.num_callbacks)
@@ -392,17 +387,15 @@ class S3Endpoint(endpoints.EndpointBase):
             raise
 
         mp.complete_upload()
-        self.log.debug("Finished multi part upload of %(backup_file)s to "\
-            "%(fqn)s" % vars())
-            
+        self.log.debug("Finished multi part upload of %s to %s", backup_file, 
+            fqn)
         return fqn
 
     def _do_single_part_upload(self, backup_file):
         
         fqn = self._fqn(backup_file.backup_path)
-        self.log.debug("Starting single part upload of %(backup_file)s to "\
-            "%(fqn)s" % vars())
-            
+        self.log.debug("Starting single part upload of %s to %s", backup_file, 
+            fqn)
         key = self.bucket.new_key(backup_file.backup_path)
         
         # All meta data fields have to be strings.
@@ -419,8 +412,8 @@ class S3Endpoint(endpoints.EndpointBase):
         key.set_contents_from_filename(backup_file.file_path, replace=False,
             cb=timing.progress, num_cb=timing.num_callbacks)
 
-        self.log.debug("Finished single part upload of %(backup_file)s to "\
-            "%(fqn)s" % vars())
+        self.log.debug("Finished single part upload of %s to %s", backup_file, 
+            fqn)
         return fqn
     
     def _chunk_file(self, file_path):
@@ -429,8 +422,8 @@ class S3Endpoint(endpoints.EndpointBase):
         
         chunk_bytes = self.args.multipart_chunk_size_mb * (1024**2)
         
-        self.log.debug("Splitting file %(file_path)s into chunks of "\
-            "%(chunk_bytes)s bytes" % vars())
+        self.log.debug("Splitting file %s into chunks of %s bytes", 
+            file_path, chunk_bytes)
 
         with open(file_path, 'rb') as f:
             chunk = f.read(chunk_bytes)
