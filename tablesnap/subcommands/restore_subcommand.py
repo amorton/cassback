@@ -219,7 +219,7 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
                         json.loads(component_json))
                 )
             except (Queue.Empty):
-                return None
+                return (None, None)
 
         endpoint = self._endpoint(self.args)
         manifest, component = safe_get()
