@@ -222,8 +222,8 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
                 return None
 
         endpoint = self._endpoint(self.args)
-        component = safe_get()
-        while manifest, component is not None:
+        manifest, component = safe_get()
+        while component is not None:
             self.log.info("Restoring component %s under %s", component, 
                 self.args.cassandra_data_dir)
             
@@ -261,7 +261,7 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
                     ).serialise()))
 
             self.work_queue.task_done()
-            component = safe_get()
+            manifest, component = safe_get()
         return
 
     def _should_restore(self, backup_file, dest_prefix):
