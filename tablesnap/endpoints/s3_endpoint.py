@@ -160,7 +160,7 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = backup_file.backup_path
         fqn = self._fqn(key_name)
         dest_path = os.path.join(dest_prefix, backup_file.restore_path)
-        file_util.ensure_dir(os.path.dir(dest_path))
+        file_util.ensure_dir(os.path.dirname(dest_path))
         self.log.debug("Starting to restore from %s to %s", fqn, dest_path)
         
         key = self.bucket.get_key(key_name)
