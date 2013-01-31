@@ -120,7 +120,11 @@ class RestoreSubCommand(subcommands.SubCommand):
         # Fill the queue with components we want to restore.
         components = []
         for component in manifest.iter_components():
-            work_queue.put(json.dumps(component.serialise()))
+            msg = (
+                json.dumps(manifest.serialise()),
+                json.dumps(component.serialise())
+            )
+            work_queue.put(msg)
             components.append(component)
         self.log.info("Queued components for restore: %s", 
             ", ".join(str(c) for c in components))
@@ -206,14 +210,20 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
 
         def safe_get():
             try:
-                return cassandra.SSTableComponent.deserialise(json.loads(
-                    self.work_queue.get_nowait()))
+                ks_backup_json, component_json = self.work_queue.get_nowait()
+                
+                return (
+                    cassandra.KeyspaceBackup.deserialise(
+                        json.loads(ks_backup_json)),
+                    cassandra.SSTableComponent.deserialise(
+                        json.loads(component_json))
+                )
             except (Queue.Empty):
                 return None
 
         endpoint = self._endpoint(self.args)
         component = safe_get()
-        while component is not None:
+        while manifest, component is not None:
             self.log.info("Restoring component %s under %s", component, 
                 self.args.cassandra_data_dir)
             
@@ -222,7 +232,7 @@ class SlurpWorkerThread(subcommands.SubCommandWorkerThread):
             # we also want the MD5, that is on disk
             backup_file = endpoint.read_backup_file(cassandra.BackupFile(
                 None, component=component, md5="", 
-                host=self.args.host).backup_path)
+                host=manifest.host).backup_path)
                 
             # Restore the file if we want to
             should_restore, reason = self._should_restore(backup_file, 
