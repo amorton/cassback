@@ -90,21 +90,28 @@ def arg_parser():
         dest="log_level", 
         choices=["FATAL", "CRITICAL", "ERROR", "WARN", "INFO", "DEBUG"],
         help="Logging level.")
-    main_parser.add_argument("--log-file", default="./tablesnap.log", 
+    main_parser.add_argument("--log-file", 
+        default="/var/log/tablesnap/tablesnap.log", 
         dest="log_file", 
         help="Logging file.")
 
     return main_parser
 
+def init_logging(args):
+    
+    logging.basicConfig(filename=os.path.abspath(args.log_file), 
+        level=getattr(logging, args.log_level))
+    logging.info("Logging initialised.")
+    return
+    
 def tablesnap_main():
     """Script entry point for the command line tool    
     """
     
+    
     args = arg_parser().parse_args()
-
-    logging.basicConfig(filename=os.path.abspath(args.log_file), 
-        level=getattr(logging, args.log_level))
-
+    init_logging(args)
+    
     log = logging.getLogger(__name__)
     log.debug("Got command args %(args)s" % vars())
     cassandra.set_version(args.cassandra_version)
