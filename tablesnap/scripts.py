@@ -46,7 +46,8 @@ def arg_parser():
     # This is the main parser that the script entry point uses.
     main_parser = argparse.ArgumentParser(
         description="tablesnap - snap, slurp, purge", 
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter, 
+        fromfile_prefix_chars="@")
     
     # say we have sub commands
     sub_parsers = main_parser.add_subparsers(title="Commands", 
