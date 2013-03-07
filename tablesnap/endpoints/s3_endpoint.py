@@ -66,6 +66,8 @@ class S3Endpoint(endpoints.EndpointBase):
             default=None, help="AWS API Secret Key")
         group.add_argument('--bucket-name', default=None, dest="bucket_name",
             help='S3 bucket to upload to.')
+        group.add_argument('--key-prefix', default="", dest="key_prefix",
+            help='S3 key prefix.')
             
         group.add_argument('--max-upload-size-mb', dest='max_upload_size_mb', 
             type=int, default=5120,
@@ -106,13 +108,15 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = path
         fqn = self._fqn(key_name)
 
-        self.log.debug("Starting to read meta for key %s ", fqn)
+        self.log.debug("Starting to read meta for key %s:%s ", 
+            self.args.bucket_name, fqn)
       
-        key = self.bucket.get_key(key_name)
+        key = self.bucket.get_key(fqn)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
         
-        self.log.debug("Finished reading meta for key %s ", fqn)
+        self.log.debug("Finished reading meta for key %s:%s ", 
+            self.args.bucket_name, fqn)
         return cassandra.BackupFile.deserialise(self._aws_meta_to_dict(
             key.metadata))
 
@@ -121,10 +125,11 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = ks_backup.backup_path
         fqn = self._fqn(key_name)
         
-        self.log.debug("Starting to store json to %s", fqn)
+        self.log.debug("Starting to store json to %s:%s", 
+            self.args.bucket_name, fqn)
         
         # TODO: Overwrite ? 
-        key = self.bucket.new_key(key_name)
+        key = self.bucket.new_key(fqn)
         json_str = json.dumps(ks_backup.serialise())
         timing = endpoints.TransferTiming(self.log, fqn, len(json_str))
         key.set_contents_from_string(
@@ -132,7 +137,8 @@ class S3Endpoint(endpoints.EndpointBase):
             headers={'Content-Type': 'application/json'}, 
             cb=timing.progress, num_cb=timing.num_callbacks)
 
-        self.log.debug("Finished storing json to %s", fqn)
+        self.log.debug("Finished storing json to %s:%s", 
+            self.args.bucket_name, fqn)
         return 
         
 
@@ -141,15 +147,17 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = path
         fqn = self._fqn(key_name)
         
-        self.log.debug("Starting to read json from %s", fqn)
+        self.log.debug("Starting to read json from %s:%s", 
+            self.args.bucket_name, fqn)
         
-        key = self.bucket.get_key(key_name)
+        key = self.bucket.get_key(fqn)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
         timing = endpoints.TransferTiming(self.log, fqn, 0)
         data = json.loads(key.get_contents_as_string(cb=timing.progress, 
             num_cb=timing.num_callbacks))
-        self.log.debug("Finished reading json from %s", fqn)
+        self.log.debug("Finished reading json from %s:%s", 
+            self.args.bucket_name, fqn)
         
         return cassandra.KeyspaceBackup.deserialise(data)
         
@@ -161,9 +169,10 @@ class S3Endpoint(endpoints.EndpointBase):
         fqn = self._fqn(key_name)
         dest_path = os.path.join(dest_prefix, backup_file.restore_path)
         file_util.ensure_dir(os.path.dirname(dest_path))
-        self.log.debug("Starting to restore from %s to %s", fqn, dest_path)
+        self.log.debug("Starting to restore from %s:%s to %s", 
+            self.args.bucket_name, fqn, dest_path)
         
-        key = self.bucket.get_key(key_name)
+        key = self.bucket.get_key(fqn)
         if key is None:
             raise EnvironmentError(errno.ENOENT, fqn)
         timing = endpoints.TransferTiming(self.log, fqn, 
@@ -181,8 +190,9 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = relative_path
         fqn = self._fqn(key_name)
         
-        self.log.debug("Checking if key %s exists", fqn)
-        key = self.bucket.get_key(key_name)
+        self.log.debug("Checking if key %s:%s exists", self.args.bucket_name, 
+            fqn)
+        key = self.bucket.get_key(fqn)
         return False if key is None else True 
             
 
@@ -194,9 +204,10 @@ class S3Endpoint(endpoints.EndpointBase):
         key_name = relative_path
         fqn = self._fqn(key_name)
 
-        self.log.debug("Starting to validate checkum for %s", fqn)
+        self.log.debug("Starting to validate checkum for %s:%s", 
+            self.args.bucket_name, fqn)
             
-        key = self.bucket.get_key(key_name)
+        key = self.bucket.get_key(fqn)
         if key == None: 
             self.log.debug("Key %s does not exist, so checksum is invalid", 
                 fqn)
@@ -208,16 +219,16 @@ class S3Endpoint(endpoints.EndpointBase):
             hash_match = expected_hash == key_md5
         else:
             key_etag = key.etag.strip('"')
-            self.log.info("Missing md5 meta data for %s using etag", key_name)
+            self.log.info("Missing md5 meta data for %s using etag", fqn)
             hash_match = expected_hash == key_etag
         
         if hash_match:
             self.log.debug("Backup file %s matches expected md5 %s", 
-                key_name, expected_hash)
+                fqn, expected_hash)
             return True
             
         self.log.warn("Backup file %s does not match expected md5 "\
-            "%s, got %s", key_name, expected_hash, key_md5 or key_etag)
+            "%s, got %s", fqn, expected_hash, key_md5 or key_etag)
         return False
 
     def iter_dir(self, relative_path, include_files=True, 
@@ -228,20 +239,21 @@ class S3Endpoint(endpoints.EndpointBase):
             key_name = key_name + "/"
         fqn = self._fqn(key_name)
         
-        self.log.debug("Starting to iterate the dir for %s", fqn)
+        self.log.debug("Starting to iterate the dir for %s:%s", 
+            self.args.bucket_name, fqn)
         
         if include_files and not include_dirs and not recursive:
             # easier, we just want to list the keys. 
             return [
                 key.name.replace(key_name, "")
-                for key in self.bucket.list(prefix=key_name)
+                for key in self.bucket.list(prefix=fqn)
             ]
         
         items = []
         
         if not recursive:
             # return files and/or directories in this path
-            for entry in self.bucket.list(prefix=key_name, delimiter="/"):
+            for entry in self.bucket.list(prefix=fqn, delimiter="/"):
                 if include_files and isinstance(entry, s3_key.Key):
                     items.append(entry.name.replace(key_name, ""))
                 elif include_dirs:
@@ -267,21 +279,23 @@ class S3Endpoint(endpoints.EndpointBase):
         Returns the full path to the file in the backup."""
         
         key_name = relative_path
+        fqn = self._fqn(key_name)
         bucket_name = self.args.bucket_name
         
         if dry_run:
             return key_name
             
-        self.log.debug("Starting to delete key %s in %s", key_name, 
-            bucket_name)
+        self.log.debug("Starting to delete key %s:%s" % (
+            self.args.bucket_name, key_name,))
         
         key = self.bucket.get_key(key_name)
-        assert key is not None, "Cannot delete missing key %s" % (key_name,)
+        assert key is not None, "Cannot delete missing key %s:%s" % (
+            self.args.bucket_name, key_name,)
             
         key.delete()
 
-        self.log.debug("Finished deleting from %s in %s", key_name, 
-            bucket_name)
+        self.log.debug("Finished deleting from %s:%s", self.args.bucket_name, 
+            key_name)
         return key_name
 
     def remove_file_with_meta(self, relative_path, dry_run=False):
@@ -356,23 +370,25 @@ class S3Endpoint(endpoints.EndpointBase):
         Note the fully qualified name is not a url. It has the form 
         <bucket_name>//key_path"""
         
-        return  "%s//%s" % (self.args.bucket_name, key_name)
+        prefix = "%s/" % (self.args.key_prefix) if self.args.key_prefix\
+            else "" 
+        return  "%s%s" % (prefix, key_name)
         
     def _do_multi_part_upload(self, backup_file):
         
         fqn = self._fqn(backup_file.backup_path)
-        self.log.debug("Starting multi part upload of %s to %s", backup_file, 
-            fqn)
+        self.log.debug("Starting multi part upload of %s to %s:%s", 
+            backup_file, self.args.bucket_name, fqn)
         # All meta tags must be strings
         metadata = self._dict_to_aws_meta(backup_file.serialise())
-        mp = self.bucket.initiate_multipart_upload(backup_file.file_path, 
+        mp = self.bucket.initiate_multipart_upload(fqn, 
             metadata=metadata)
         
         timing = endpoints.TransferTiming(self.log, fqn, 
             backup_file.component.stat.size)
         chunk = None
         try:
-            # Part numbers must start at 1self.
+            # Part numbers must start at 1
             for part, chunk in enumerate(self._chunk_file(
                 backup_file.file_path),1):
                 
@@ -387,16 +403,16 @@ class S3Endpoint(endpoints.EndpointBase):
             raise
 
         mp.complete_upload()
-        self.log.debug("Finished multi part upload of %s to %s", backup_file, 
-            fqn)
+        self.log.debug("Finished multi part upload of %s to %s:%s", 
+            backup_file, self.args.bucket_name, fqn)
         return fqn
 
     def _do_single_part_upload(self, backup_file):
         
         fqn = self._fqn(backup_file.backup_path)
-        self.log.debug("Starting single part upload of %s to %s", backup_file, 
-            fqn)
-        key = self.bucket.new_key(backup_file.backup_path)
+        self.log.debug("Starting single part upload of %s to %s:%s", 
+            backup_file, self.args.bucket_name, fqn)
+        key = self.bucket.new_key(fqn)
         
         # All meta data fields have to be strings.
         key.update_metadata(self._dict_to_aws_meta(backup_file.serialise()))
@@ -412,8 +428,8 @@ class S3Endpoint(endpoints.EndpointBase):
         key.set_contents_from_filename(backup_file.file_path, replace=False,
             cb=timing.progress, num_cb=timing.num_callbacks)
 
-        self.log.debug("Finished single part upload of %s to %s", backup_file, 
-            fqn)
+        self.log.debug("Finished single part upload of %s to %s:%s", 
+            backup_file, self.args.bucket_name, fqn)
         return fqn
     
     def _chunk_file(self, file_path):

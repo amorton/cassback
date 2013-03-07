@@ -114,7 +114,7 @@ def tablesnap_main():
     init_logging(args)
     
     log = logging.getLogger(__name__)
-    log.debug("Got command args %(args)s" % vars())
+    log.info("Got command args %(args)s" % vars())
     cassandra.set_version(args.cassandra_version)
     
     try:
