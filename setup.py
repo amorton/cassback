@@ -29,7 +29,8 @@ setup(
                 "tablesnap.subcommands"],
     install_requires=[
         'boto>=2.2',
-        "watchdog>=0.6."
+        "watchdog>=0.6.", 
+        "pytz>=2012j"
     ],
     entry_points=entry_points
 )

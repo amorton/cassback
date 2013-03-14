@@ -18,7 +18,7 @@
 """
 
 import datetime
-
+import time
 
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%S.%f"
 """ISO string format"""
@@ -34,6 +34,9 @@ DT_INPUT_FORMATS= [
 def now():
     return datetime.datetime.utcnow()
     
+def now_local():
+    return datetime.datetime.now()
+    
 def now_iso():
     """Get the current date/time formatted as ISO."""
     return to_iso(now())
@@ -47,6 +50,11 @@ def from_iso(dt_str):
     """Convert the iso ``dt_str`` to a datetime. 
     """
     return datetime.datetime.strptime(dt_str, ISO_FORMAT)
+
+def to_utc(dt):
+    """Convert a local datetime to utc."""
+    time_tuple = time.gmtime(time.mktime(dt.timetuple()))
+    return datetime.datetime(*time_tuple[0:6])
 
 def parse_date_input(input, formats=DT_INPUT_FORMATS):
     """Parse the datetime input ``input`` using the ``formats``.

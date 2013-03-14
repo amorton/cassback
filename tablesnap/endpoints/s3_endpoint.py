@@ -243,11 +243,15 @@ class S3Endpoint(endpoints.EndpointBase):
             self.args.bucket_name, fqn)
         
         if include_files and not include_dirs and not recursive:
-            # easier, we just want to list the keys. 
-            return [
-                key.name.replace(key_name, "")
+            # easier, we just want to list the keys.
+            key_names = [
+                key.name.replace(fqn, "")
                 for key in self.bucket.list(prefix=fqn)
             ]
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("For dir %s:%s got files only %s", 
+                    self.args.bucket_name, fqn, key_names)
+            return key_names
         
         items = []
         
@@ -255,9 +259,13 @@ class S3Endpoint(endpoints.EndpointBase):
             # return files and/or directories in this path
             for entry in self.bucket.list(prefix=fqn, delimiter="/"):
                 if include_files and isinstance(entry, s3_key.Key):
-                    items.append(entry.name.replace(key_name, ""))
+                    items.append(entry.name.replace(fqn, ""))
                 elif include_dirs:
-                    items.append(entry.name.replace(key_name, ""))
+                    items.append(entry.name.replace(fqn, ""))
+                    
+            if self.log.isEnabledFor(logging.DEBUG):
+                self.log.debug("For dir %s:%s got non recursive dirs and/or "\
+                    "files %s", self.args.bucket_name, fqn, items)
             return items
         
         # recursive, we need to do a hierarchal list
@@ -271,8 +279,12 @@ class S3Endpoint(endpoints.EndpointBase):
                         yield entry.name
                     for sub_entry in _walk_keys(entry.name):
                         yield sub_entry
-        return list(_walk_keys(key_name))
-    
+        items = list(_walk_keys(fqn))
+        if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug("For dir %s:%s got recursive dirs and/or "\
+            "files %s", self.args.bucket_name, fqn, items)
+        return items
+                    
     def remove_file(self, relative_path, dry_run=False):
         """Removes the file at the ``relative_path``. 
         

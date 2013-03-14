@@ -97,7 +97,6 @@ class SubCommand(object):
         
         manifest_dir = cassandra.KeyspaceBackup.backup_day_dir(keyspace, 
             host, day) 
-        
         # Create a manifest from the file name that does not have the
         # full file list.
         manifests = [

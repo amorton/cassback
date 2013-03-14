@@ -48,7 +48,7 @@ class ListSubCommand(subcommands.SubCommand):
             "the most recent backup for the specified day is listed.")
 
         sub_parser.add_argument('--day', 
-            default=dt_util.now_iso(), 
+            default=dt_util.to_iso(dt_util.now_local()), 
             help="Day to return list the backups from.")
             
         sub_parser.add_argument("keyspace",
@@ -61,7 +61,8 @@ class ListSubCommand(subcommands.SubCommand):
 
     def __init__(self, args):
         self.args = args
-        self.args.day = dt_util.parse_date_input(self.args.day)
+        self.args.day = dt_util.to_utc(dt_util.parse_date_input(
+            self.args.day))
         
     def __call__(self):
 
@@ -74,7 +75,7 @@ class ListSubCommand(subcommands.SubCommand):
         if not self.args.list_all and manifests:
             manifests = [max(manifests, key=lambda x:x.timestamp),]
         
-        msg = "{prefix} for keyspace {keyspace} from {host} for {day}:".format(
+        msg = "{prefix} for keyspace {keyspace} from {host} for {day} UTC:".format(
             prefix="All backups" if self.args.list_all else "Latest backup", 
             keyspace=self.args.keyspace, host=self.args.host, 
             day=self.args.day)
