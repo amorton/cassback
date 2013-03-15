@@ -174,7 +174,7 @@ class RestoreSubCommand(subcommands.SubCommand):
         failed_ops = [
             op_result
             for op_result in op_results
-            if op_result.failed
+            if op_result.failed_reason
         ]
         
         skipped_ops = [
@@ -185,7 +185,7 @@ class RestoreSubCommand(subcommands.SubCommand):
         success_ops = [
             op_result
             for op_result in op_results
-            if not op_result.failed and op_result.should_restore
+            if not op_result.failed_reason and op_result.should_restore
         ]
         corrupt_files = [
             op_result
