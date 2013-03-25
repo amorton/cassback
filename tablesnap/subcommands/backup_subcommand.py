@@ -29,7 +29,7 @@ import time
 
 from watchdog import events, observers
 
-from tablesnap import cassandra, dt_util
+from tablesnap import cassandra, dt_util, file_util
 from tablesnap.subcommands import subcommands
 
 # ============================================================================
@@ -129,6 +129,10 @@ class BackupSubCommand(subcommands.SubCommand):
         """
         return SnapWorkerThread(i, file_queue, copy.copy(self.args))
 
+
+# ============================================================================
+# Worker thread for backing up files
+
 class SnapWorkerThread(subcommands.SubCommandWorkerThread):
     log = logging.getLogger("%s.%s" % (__name__, "SnapWorkerThread"))
 
@@ -145,24 +149,20 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         endpoint = self._endpoint(self.args)
         while True:
             # blocking call
-            ks_backup_json, component_json = self.file_q.get()
-            ks_backup = cassandra.KeyspaceBackup.deserialise(json.loads(
-                ks_backup_json))
-            component = cassandra.SSTableComponent.deserialise(json.loads(
-                component_json))
-
-            try:
-                self._run_internal(endpoint, ks_backup, component)
-            except (EnvironmentError) as e:
-                if not(e.errno == errno.ENOENT and \
-                    e.filename==component.file_path):
-                    raise
-                self.log.info("Aborted uploading %s as it was removed", 
-                    component)
+            backup_msg = self.file_q.get()
+            if backup_msg.file_ref:
+                # a file was created or renamed, we have a stable ref
+                with backup_msg.file_ref:
+                    self._run_internal(endpoint, backup_msg.ks_manifest, 
+                        backup_msg.component)
+            else:
+                # A file was deleted, no stable ref. 
+                self._run_internal(endpoint, backup_msg.ks_manifest, 
+                    backup_msg.component)
             self.file_q.task_done()
         return
 
-    def _run_internal(self, endpoint, ks_backup, component):
+    def _run_internal(self, endpoint, ks_manifest, component):
         """Backup the cassandra file and keyspace manifest. 
 
         Let errors from here buble out. 
@@ -173,9 +173,10 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
         self.log.info("Uploading file %s", component)
         
         if component.is_deleted:
-            endpoint.backup_keyspace(ks_backup)
+            endpoint.backup_keyspace(ks_manifest)
             self.log.info("Uploaded backup set %s after deletion of %s", 
-                ks_backup.backup_path, component)
+                ks_manifest.backup_path, component)
+            return
 
         # Create a BackupFile, this will have checksums 
         backup_file = cassandra.BackupFile(component.file_path, 
@@ -194,11 +195,14 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
             return False
     
         uploaded_path = endpoint.backup_file(backup_file)
-        endpoint.backup_keyspace(ks_backup)
+        endpoint.backup_keyspace(ks_manifest)
         
         self.log.info("Uploaded file %s to %s", backup_file.file_path, 
             uploaded_path)
         return True
+
+# ============================================================================
+# Reporter thread logs the number of pending commands.
 
 class SnapReporterThread(subcommands.SubCommandWorkerThread):
     """Watches the work queue and reports on progress. """
@@ -222,6 +226,8 @@ class SnapReporterThread(subcommands.SubCommandWorkerThread):
             time.sleep(self.interval)
         return
 
+# ============================================================================
+# Watches the files system and queue's files for backup
 
 class WatchdogWatcher(events.FileSystemEventHandler):
     """Watch the disk for new files."""
@@ -267,45 +273,45 @@ class WatchdogWatcher(events.FileSystemEventHandler):
 
     def _maybe_queue_file(self, file_path):
         
-        if cassandra.is_snapshot_path(file_path):
-            self.log.info("Ignoring snapshot path %s", file_path)
-            return False
-
-        try:
-            component = cassandra.SSTableComponent(file_path)
-        except (ValueError):
-            self.log.info("Ignoring non Cassandra file %s", file_path)
-            return False
-        except (EnvironmentError) as e:
-            if e.errno == errno.ENOENT:
-                self.log.info("Ignoring missing file %s", file_path)
+        with file_util.FileReferenceContext(file_path) as file_ref:
+            if file_ref is None:
+                # File was deleted before we could link it.
+                self.log.info("Ignoring deleted path %s", file_path)
                 return False
-            else:
-                raise
+                
+            if cassandra.is_snapshot_path(file_ref.stable_path):
+                self.log.info("Ignoring snapshot path %s", file_ref.stable_path)
+                return False
 
-        if component.temporary:
-            self.log.info("Ignoring temporary file %s", file_path)
-            return False
+            try:
+                component = cassandra.SSTableComponent(file_ref.stable_path)
+            except (ValueError):
+                self.log.info("Ignoring non Cassandra file %s", 
+                    file_ref.stable_path)
+                return False
+                
+            if component.temporary:
+                self.log.info("Ignoring temporary file %s", file_ref.stable_path)
+                return False
 
-        if component.keyspace in self.exclude_keyspaces:
-            self.log.info("Ignoring file %s from excluded "\
-                "keyspace %s", file_path, component.keyspace)
-            return False
+            if component.keyspace in self.exclude_keyspaces:
+                self.log.info("Ignoring file %s from excluded "\
+                    "keyspace %s", file_ref.stable_path, component.keyspace)
+                return False
 
-        if (component.keyspace.lower() == "system") and (
-            not self.include_system_keyspace):
+            if (component.keyspace.lower() == "system") and (
+                not self.include_system_keyspace):
 
-            self.log.info("Ignoring system keyspace file %s", file_path)
-            return False
-
-        ks_backup = cassandra.KeyspaceBackup(self.data_dir, 
-            component.keyspace)
-        self.log.info("Queueing file %s", file_path)
-        msg = (
-            json.dumps(ks_backup.serialise()), 
-            json.dumps(component.serialise())
-        )
-        self.file_queue.put(msg)
+                self.log.info("Ignoring system keyspace file %s", 
+                    file_ref.stable_path)
+                return False
+            
+            ks_manifest = cassandra.KeyspaceBackup(self.data_dir, 
+                component.keyspace)
+            self.log.info("Queueing file %s", file_ref.stable_path)
+            file_ref.ignore_next_exit = True
+            self.file_queue.put(
+                BackupMessage(file_ref, ks_manifest, component))
         return True
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -329,26 +335,34 @@ class WatchdogWatcher(events.FileSystemEventHandler):
         if cassandra.is_snapshot_path(file_path):
             self.log.info("Ignoring deleted snapshot path %s", file_path)
             return
-            
+        
         try:
             component = cassandra.SSTableComponent(file_path, is_deleted=True)
         except (ValueError):
             self.log.info("Ignoring deleted non Cassandra file %s", file_path)
             return
-        
+    
         if component.component != cassandra.Components.DATA:
             self.log.info("Ignoring deleted non %s component %s", 
                 cassandra.Components.DATA, file_path)
             return
+
         # We want to do a backup so we know this sstable was removed. 
-        ks_backup = cassandra.KeyspaceBackup(self.data_dir, 
+        ks_manifest = cassandra.KeyspaceBackup(self.data_dir, 
             component.keyspace, ignore_sstable=component)
         self.log.info("Queuing backup after deletion of %s", file_path)
-        
-        msg = (
-            json.dumps(ks_backup.serialise()), 
-            json.dumps(component.serialise())
-        )
-        self.file_queue.put(msg)
+        self.file_queue.put(
+            BackupMessage(None, ks_manifest, component))
         return
-        
+
+# ============================================================================
+# Message passed to the backup threads
+
+class BackupMessage(object):
+    
+    def __init__(self, file_ref, ks_manifest, component):
+        self.file_ref = file_ref
+        self.ks_manifest = ks_manifest
+        self.component = component
+    
+
