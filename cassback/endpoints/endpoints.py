@@ -28,7 +28,7 @@ import time
 import boto
 from boto.s3 import key
 
-from tablesnap import dt_util, file_util
+from cassback import dt_util, file_util
 
 # ============================================================================ 
 #
@@ -36,7 +36,7 @@ from tablesnap import dt_util, file_util
 def create_from_args(args):
 
     endpoint_name = args.endpoint
-    for entry_point in pkg_resources.iter_entry_points("tablesnap.endpoints"):            
+    for entry_point in pkg_resources.iter_entry_points("cassback.endpoints"):            
         
         endpoint_class = entry_point.load()
         if endpoint_class.name == endpoint_name:
@@ -47,7 +47,7 @@ def create_from_args(args):
 def validate_args(args):
 
     endpoint_name = args.endpoint
-    for entry_point in pkg_resources.iter_entry_points("tablesnap.endpoints"):            
+    for entry_point in pkg_resources.iter_entry_points("cassback.endpoints"):            
         
         endpoint_class = entry_point.load()
         if endpoint_class.name == endpoint_name:

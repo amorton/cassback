@@ -29,8 +29,8 @@ import time
 
 from watchdog import events, observers
 
-from tablesnap import cassandra, dt_util, file_util
-from tablesnap.subcommands import subcommands
+from cassback import cassandra, dt_util, file_util
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # Snap - used to backup files

@@ -21,8 +21,8 @@ import logging
 import os.path
 import shutil
 
-from tablesnap import cassandra, file_util
-from tablesnap.endpoints import endpoints
+from cassback import cassandra, file_util
+from cassback.endpoints import endpoints
 
 # ============================================================================ 
 # Local endpoint, mostly for testing. 

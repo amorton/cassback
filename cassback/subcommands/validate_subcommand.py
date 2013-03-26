@@ -18,8 +18,8 @@
 import errno
 import logging
 
-from tablesnap import cassandra
-from tablesnap.subcommands import subcommands
+from cassback import cassandra
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # Validate - validate that all files in a backup are present

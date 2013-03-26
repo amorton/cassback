@@ -21,8 +21,8 @@ import logging
 import os.path
 import socket
 
-from tablesnap import cassandra, dt_util
-from tablesnap.subcommands import subcommands
+from cassback import cassandra, dt_util
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # 

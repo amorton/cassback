@@ -27,8 +27,8 @@ import boto
 from boto.s3 import key as s3_key
 from boto.s3 import prefix as s3_prefix
 
-from tablesnap import cassandra, file_util
-from tablesnap.endpoints import endpoints
+from cassback import cassandra, file_util
+from cassback.endpoints import endpoints
 
 # ============================================================================ 
 # S3 endpoint

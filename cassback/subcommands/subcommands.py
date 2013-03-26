@@ -23,8 +23,8 @@ import signal
 import threading
 import traceback
 
-from tablesnap import cassandra
-from tablesnap.endpoints import endpoints
+from cassback import cassandra
+from cassback.endpoints import endpoints
 # ============================================================================
 # 
 

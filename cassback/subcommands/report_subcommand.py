@@ -20,8 +20,8 @@ import itertools
 import logging
 import os.path
 
-from tablesnap import dt_util
-from tablesnap.subcommands import subcommands
+from cassback import dt_util
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # Survey Report - Report on the results of a survey. 

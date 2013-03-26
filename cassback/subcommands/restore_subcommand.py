@@ -31,8 +31,8 @@ import signal
 import socket
 import time
 
-from tablesnap import cassandra, dt_util, file_util
-from tablesnap.subcommands import subcommands
+from cassback import cassandra, dt_util, file_util
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # Slurp - restore a backup
@@ -420,10 +420,10 @@ class RestoreOperation(object):
                 source_path=self.backup_file.backup_path)
 
         # move the current file to 
-        # $data_dir/tablesnap-corrupt/keyspace/$file_name
+        # $data_dir/../cassback-corrupt/keyspace/$file_name
         _, file_name = os.path.split(dest_path)
-        corrupt_path = os.path.join(*(self.args.data_dir, 
-            "tablesnap-corrupt", self.backup_file.component.keyspace, 
+        corrupt_path = os.path.join(*(self.args.data_dir, "..",
+            "cassback-corrupt", self.backup_file.component.keyspace, 
             file_name))
         file_util.ensure_dir(os.path.dirname(corrupt_path))
         self.log.info("Moving existing corrupt file %s to %s", dest_path, 

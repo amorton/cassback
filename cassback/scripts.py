@@ -8,12 +8,12 @@ import traceback
 
 import pkg_resources
 
-from tablesnap import cassandra
-from tablesnap.endpoints import endpoints
+from cassback import cassandra
+from cassback.endpoints import endpoints
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # Sub Commands take the command line args and call the function to do the 
-# work. Sub commands are retrieved from the ``tablesnap.sub_commands`` entry 
+# work. Sub commands are retrieved from the ``cassback.sub_commands`` entry 
 # point using :mod:`pkg_resources`, see :func:`arg_parser`.
 # The ones here are global.
 
@@ -28,15 +28,15 @@ def execute_help(args):
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # 
 def arg_parser():
-    """Builds a :class:`argparse.ArgumentParser` for the ``tablesnap`` 
+    """Builds a :class:`argparse.ArgumentParser` for the ``cassback`` 
     command. 
     
-    The ``tablesnap`` script uses a sub command structure, like svn or 
+    The ``cassback`` script uses a sub command structure, like svn or 
     git. For example::
     
-        tablesnap snap-s3 <watch-dir> <bucket-name>
+        cassback snap-s3 <watch-dir> <bucket-name>
         
-    * ``tablesnap`` is the script name. 
+    * ``cassback`` is the script name. 
     * ``snap-s3`` is the sub command
     * ``watch-dir`` is a positional argument common to all snap commands. 
     * ``bucket-name`` is positional argument for the ``snap-s3`` 
@@ -45,7 +45,7 @@ def arg_parser():
     
     # This is the main parser that the script entry point uses.
     main_parser = argparse.ArgumentParser(
-        description="tablesnap - snap, slurp, purge", 
+        description="cassback - snap, slurp, purge", 
         formatter_class=argparse.ArgumentDefaultsHelpFormatter, 
         fromfile_prefix_chars="@")
     
@@ -64,14 +64,14 @@ def arg_parser():
         help='Command to print help for.')
     
     for entry_point in pkg_resources.iter_entry_points(
-        "tablesnap.sub_commands"):
+        "cassback.sub_commands"):
         
         # Load the class and add it's parser
         entry_point.load().add_sub_parser(sub_parsers)
 
     endpoint_names = []
     # Add all of the endpoints
-    for entry_point in pkg_resources.iter_entry_points("tablesnap.endpoints"):
+    for entry_point in pkg_resources.iter_entry_points("cassback.endpoints"):
         
         # Load the class and add it's parser
         endpoint_class = entry_point.load()
@@ -92,7 +92,7 @@ def arg_parser():
         choices=["FATAL", "CRITICAL", "ERROR", "WARN", "INFO", "DEBUG"],
         help="Logging level.")
     main_parser.add_argument("--log-file", 
-        default="/var/log/tablesnap/tablesnap.log", 
+        default="/var/log/cassback/cassback.log", 
         dest="log_file", 
         help="Logging file.")
 
@@ -105,7 +105,7 @@ def init_logging(args):
     logging.info("Logging initialised.")
     return
     
-def tablesnap_main():
+def cassback_main():
     """Script entry point for the command line tool    
     """
     

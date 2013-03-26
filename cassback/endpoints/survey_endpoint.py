@@ -19,8 +19,8 @@ import json
 import logging
 import os.path
 
-from tablesnap import cassandra, dt_util, file_util
-from tablesnap.endpoints import endpoints
+from cassback import cassandra, dt_util, file_util
+from cassback.endpoints import endpoints
 
 
 # ============================================================================ 

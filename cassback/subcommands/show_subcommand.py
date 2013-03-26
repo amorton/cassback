@@ -21,8 +21,8 @@
 import logging
 import os.path
 
-from tablesnap import dt_util, file_util
-from tablesnap.subcommands import subcommands
+from cassback import dt_util, file_util
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # Show - show the contents of a backup

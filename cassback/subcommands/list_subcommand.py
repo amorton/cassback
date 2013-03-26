@@ -19,8 +19,8 @@ import logging
 import socket
 import os.path
 
-from tablesnap import cassandra, dt_util
-from tablesnap.subcommands import subcommands
+from cassback import cassandra, dt_util
+from cassback.subcommands import subcommands
 
 # ============================================================================
 # List - used to list backups
