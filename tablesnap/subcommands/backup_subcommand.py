@@ -193,7 +193,7 @@ class SnapWorkerThread(subcommands.SubCommandWorkerThread):
                 self.log.warn("Possibly corrupt file %s in the backup, "\
                     "skipping.", backup_file)
             return False
-    
+        
         uploaded_path = endpoint.backup_file(backup_file)
         endpoint.backup_keyspace(ks_manifest)
         
@@ -243,13 +243,15 @@ class WatchdogWatcher(events.FileSystemEventHandler):
         self.exclude_keyspaces = frozenset(exclude_keyspaces or [])
         self.include_system_keyspace = include_system_keyspace
 
+        self.keyspaces = {}
+        
     def start(self):
 
-        if not self.ignore_existing:
-            self.log.info("Refreshing existing files.")
-            for root, dirs, files in os.walk(self.data_dir):
-                for filename in files:
-                    self._maybe_queue_file(os.path.join(root, filename))
+        self.log.info("Refreshing existing files.")
+        for root, dirs, files in os.walk(self.data_dir):
+            for filename in files:
+                self._maybe_queue_file(os.path.join(root, filename),
+                    enqueue=not(self.ignore_existing))
 
         # watch if configured
         if self.ignore_changes:
@@ -270,8 +272,16 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             self.log.error("Watchdog Observer failed to stop. Aborting.")
             os.kill(os.getpid(), signal.SIGKILL)
         return
-
-    def _maybe_queue_file(self, file_path):
+        
+    def _get_ks_manifest(self, keyspace):
+        try:
+            ks_manifest = self.keyspaces[keyspace]
+        except (KeyError):
+            ks_manifest = cassandra.KeyspaceBackup(keyspace)
+            self.keyspaces[keyspace] = ks_manifest
+        return ks_manifest
+    
+    def _maybe_queue_file(self, file_path, enqueue=True):
         
         with file_util.FileReferenceContext(file_path) as file_ref:
             if file_ref is None:
@@ -306,12 +316,16 @@ class WatchdogWatcher(events.FileSystemEventHandler):
                     file_ref.stable_path)
                 return False
             
-            ks_manifest = cassandra.KeyspaceBackup(self.data_dir, 
-                component.keyspace)
-            self.log.info("Queueing file %s", file_ref.stable_path)
-            file_ref.ignore_next_exit = True
-            self.file_queue.put(
-                BackupMessage(file_ref, ks_manifest, component))
+            # Update the manifest with this component
+            ks_manifest = self._get_ks_manifest(component.keyspace)
+            ks_manifest.add_component(component)
+            if enqueue:
+                self.log.info("Queueing file %s", file_ref.stable_path)
+                self.file_queue.put(
+                    BackupMessage(file_ref, ks_manifest.snapshot(),component))
+                # Do not delete the file ref when we exit the context
+                file_ref.ignore_next_exit = True
+
         return True
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -348,11 +362,11 @@ class WatchdogWatcher(events.FileSystemEventHandler):
             return
 
         # We want to do a backup so we know this sstable was removed. 
-        ks_manifest = cassandra.KeyspaceBackup(self.data_dir, 
-            component.keyspace, ignore_sstable=component)
+        ks_manifest = self._get_ks_manifest(component.keyspace)
+        ks_manifest.remove_sstable(component)
         self.log.info("Queuing backup after deletion of %s", file_path)
         self.file_queue.put(
-            BackupMessage(None, ks_manifest, component))
+            BackupMessage(None, ks_manifest.snapshot(), component))
         return
 
 # ============================================================================

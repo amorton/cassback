@@ -17,6 +17,7 @@
 
 """Utilities for working with Cassandra and the versions."""
 
+import copy
 import datetime
 import errno
 import logging
@@ -110,7 +111,7 @@ def is_snapshot_path(file_path):
 
 
 # ============================================================================
-# SSTable Descriptor
+# On disk file stats.
 
 class FileStat(object):
     """Basic file stats"""
@@ -194,6 +195,8 @@ class FileStat(object):
             file_path=file_path, file_meta=file_meta))
         return file_meta
 
+# ============================================================================
+# Mock stats for a deleted file
 
 class DeletedFileStat(FileStat):
     """File stats for a deleted file.
@@ -214,7 +217,10 @@ class DeletedFileStat(FileStat):
             "mode" : 0,
             "size" : 0
         }
-        
+
+# ============================================================================
+# A SSTable Component such as a -Data.db file. 
+
 class SSTableComponent(object):
     """Meta data about a component file for an SSTable.
     
@@ -254,10 +260,7 @@ class SSTableComponent(object):
             self.stat = stat
     
     def __str__(self):
-        return "SSTableComponent for {file_path}: keyspace {keyspace}, "\
-            "cf {cf}, version {version}, generation {generation}, "\
-            "component {component}, temporary {temporary}, "\
-            "{stat}".format(**vars(self))
+        return "SSTableComponent {file_path}".format(**vars(self))
 
     def serialise(self):
         """Serialise the state to a dict."""
@@ -454,13 +457,15 @@ class SSTableComponent(object):
         if other is None:
             return False
         
-        return (other.keyspace == self.keyspace) and (other.cf == self.cf) and (
+        return (other.keyspace == self.keyspace) and (
+            other.cf == self.cf) and (
             other.version == self.version) and (
             other.generation == self.generation)
 
 
 # ============================================================================
-#
+# A file that is going to be  or has been backed up. 
+# Includes the MD5 which is expensive to calculate.
 
 class BackupFile(object):
     """A file that is going to be backed up
@@ -551,7 +556,7 @@ class BackupFile(object):
         ))
 
 # ============================================================================
-#
+# A file that was attempted to be restored. 
 
 class RestoredFile(object):
     """A file that was processed during a restore.
@@ -599,17 +604,18 @@ class RestoredFile(object):
                 s=self)
         return "{s.backup_file.backup_path} -> "\
             "Skipped: {s.reason_skipped}".format(s=self)
+
 # ============================================================================
-#
+# A manifest of the files in a keyspace.
 
 class KeyspaceBackup(object):
     """A backup set for a particular keyspace.
     """
     log = logging.getLogger("%s.%s" % (__name__, "KeyspaceBackup"))
 
-    def __init__(self, data_dir, keyspace, host=None, timestamp=None, 
-        backup_name=None, ks_files=None, ignore_sstable=None):
-        
+    def __init__(self, keyspace, host=None, timestamp=None, 
+        backup_name=None, components=None):
+        # self.components.setdefault
         self.keyspace = keyspace
         self.host = host or socket.getfqdn()
         self.timestamp = timestamp or dt_util.now()
@@ -617,24 +623,48 @@ class KeyspaceBackup(object):
             ts=_to_safe_datetime_fmt(self.timestamp), 
             keyspace=keyspace, host=self.host)
         
-        if ks_files is None and data_dir:
-            self.ks_files = self._list_files(data_dir, keyspace, 
-                ignore_sstable=ignore_sstable) 
-        else:
-            self.ks_files = ks_files
-            
+        # Map of {cf_name : [component]}
+        self.components = components or {}
+        
+    def add_component(self, component):
+        """Add the ``component`` to the list of components in this manifest.
+        """
+        assert component.keyspace == self.keyspace
+        
+        self.components.setdefault(component.cf, []).append(component)
+        return component
+    
+    def remove_sstable(self, component):
+        """Remove all components for the SSTable ``component`` belongs to."""
+        
+        assert component.keyspace == component.keyspace
+        old_components = self.components.setdefault(component.cf, [])
+        
+        self.components[component.cf] = [
+            comp 
+            for comp in old_components
+            if not component.same_sstable(comp)
+        ]
+        
+    def snapshot(self):
+        """Return a deep copy of this manifest that has the current 
+        timestamp."""
+        
+        return KeyspaceBackup(self.keyspace, host=self.host, 
+            components=copy.deepcopy(self.components))
+
     def serialise(self):
         """Return manifest that desribes the backup set."""
-        files = dict(
+        components = dict(
             (key, [component.serialise() for component in value])
-            for key, value in self.ks_files.iteritems()
+            for key, value in self.components.iteritems()
         )
         return {
             "host" : self.host,
             "keyspace" : self.keyspace,
             "timestamp" : dt_util.to_iso(self.timestamp),
             "name" : self.backup_name,
-            "ks_files" : files
+            "components" : components
         }
 
     @classmethod
@@ -642,79 +672,19 @@ class KeyspaceBackup(object):
         """Create an instance from the ``data`` dict. """
         
         assert data
-        files = dict(
+        components = dict(
             (key, [SSTableComponent.deserialise(comp) for comp in value])
-            for key, value in data["ks_files"].iteritems() 
+            for key, value in data["components"].iteritems() 
         )
-        return cls(None, data["keyspace"], host=data["host"], 
+        return cls(data["keyspace"], host=data["host"], 
             timestamp=dt_util.from_iso(data["timestamp"]), 
-            backup_name=data["name"], ks_files=files)
-            
-    def _list_files(self, data_dir, keyspace, ignore_sstable=None):
-        """Gets a list of all sstable components in the ``keyspace`` under 
-        the ``data_dir``.
-        
-        ``ignore_sstable`` is a :cls:`SSTableComponent`. If specified all 
-        components from the same SSTable are ignored. 
-        
-        Returns a dict of {cf : [SSTableComponent,]}
-        """
-        
-        if TARGET_VERSION < (1,1,0):
-            # All files in the keyspace dir
-            search_dirs = [os.path.join(data_dir, keyspace)]
-        else:
-            # Different dir for each CF.
-            try:
-                _, dir_names, _ = os.walk(os.path.join(
-                    data_dir, keyspace)).next()
-                search_dirs = [
-                    os.path.join(data_dir, keyspace, dir_name)
-                    for dir_name in dir_names
-                ]
-            except (StopIteration):
-                search_dirs = []
-        self.log.debug("Searching for SSTables in %s", search_dirs)
-        
-        # List all the files in the cf/ks dirs.
-        all_files = []
-        for search_dir in search_dirs:
-            try:
-                _, _, cf_files = os.walk(search_dir).next() 
-            except (StopIteration):
-                cf_files = []
-            all_files.extend(
-                os.path.join(search_dir, cf_file)
-                for cf_file in cf_files
-            )
-        
-        # Create components for the files. 
-        # Note that file coud disappear at this point.
-        ks_files = {}
-        for file_path in all_files:
-            try:
-                component = SSTableComponent(file_path)
-            except (ValueError):
-                # not a valid file name
-                self.log.debug("Ignoring non Cassandra file %s", file_path)
-            except (EnvironmentError) as e:
-                if e.errno == errno.ENOENT:
-                    self.log.info("Ignoring missing file %s", file_path)
-            else:
-                if component.temporary:
-                    self.log.debug("Ignoring temporary file %s", file_path)
-                elif component.same_sstable(ignore_sstable):
-                     self.log.debug("Ignoring file %s from ignore sstable %s",
-                        file_path, ignore_sstable)
-                else:
-                    ks_files.setdefault(component.cf, []).append(component)
-        return ks_files
-   
+            backup_name=data["name"], components=components)
+
     @classmethod
     def from_backup_name(cls, backup_name):
         """Create a KeyspaceBackup from a backup name. 
         
-        The object does not contain a ks_files list."""
+        The object does not contain a components list."""
         
 
         # format is timestamp-keyspace-host
@@ -729,7 +699,7 @@ class KeyspaceBackup(object):
 
         # expecting 2012_10_22T14_26_57_871835 for the safe TS. 
         timestamp = _from_safe_datetime_fmt(safe_ts)
-        return cls(None, keyspace, host=host, timestamp=timestamp)
+        return cls(keyspace, host=host, timestamp=timestamp)
 
     @classmethod
     def from_backup_path(cls, backup_path):
@@ -780,9 +750,11 @@ class KeyspaceBackup(object):
         from "Aardvark" CF before "Beetroot"
         """
         
-        cf_names = self.ks_files.keys()
+        cf_names = self.components.keys()
         cf_names.sort()
         for cf_name in cf_names:
-            for component in self.ks_files[cf_name]:
+            sorted_components = list(self.components[cf_name])
+            sorted_components.sort(key=lambda x: x.file_name)
+            for component in sorted_components:
                 yield component
 
