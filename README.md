@@ -15,6 +15,18 @@ Endpoints are used by Commands and provide an abstraction to store and retrieve 
 Installation
 ------------
 
+cassback provides a Python installer and installs dependencies and registers the `cassback` script.
+
+It can be installed by running
+
+    python setup.py install
+
+Or using pip
+
+    pip install cassback/
+
+For now you also need to create the logging dir `/var/log/cassback`. 
+
 Configuration
 -------------
 
